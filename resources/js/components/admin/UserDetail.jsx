@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../api';
+import EmptyState from '../common/EmptyState';
+import MediaPreview from '../common/MediaPreview';
 
-function UserDetail({ user, onBack, onUserAction }) {
+function UserDetail({ user, onBack, onUserAction, onShowUserPosts }) {
   const [userPosts, setUserPosts] = useState([]);
   const [userComments, setUserComments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -13,9 +16,8 @@ function UserDetail({ user, onBack, onUserAction }) {
     try {
       setLoading(true);
       // Загружаем детальную информацию о пользователе
-      const response = await fetch(`/api/admin/users/${user.id}`, {
+      const response = await apiFetch(`/api/admin/users/${user.id}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
       });
@@ -43,7 +45,9 @@ function UserDetail({ user, onBack, onUserAction }) {
   };
 
   const isDeleted = user.deleted_at !== null;
+  const isBanned = !!user.is_banned;
   const userRoles = user.roles?.map(role => role.name) || [];
+  const isAdminUser = userRoles.includes('admin');
 
   return (
     <div className="user-detail">
@@ -65,6 +69,7 @@ function UserDetail({ user, onBack, onUserAction }) {
                 className="avatar-large"
               />
               {isDeleted && <div className="deleted-badge">Удален</div>}
+              {!isDeleted && isBanned && <div className="deleted-badge deleted-badge--banned">Бан</div>}
             </div>
             
             <div className="user-info__details">
@@ -116,6 +121,12 @@ function UserDetail({ user, onBack, onUserAction }) {
                   <span className="meta-label">Регистрация:</span>
                   <span className="meta-value">{formatDate(user.created_at)}</span>
                 </div>
+                {!isDeleted && isBanned && user.ban_reason && (
+                  <div className="meta-item">
+                    <span className="meta-label">Причина блокировки:</span>
+                    <span className="meta-value">{user.ban_reason}</span>
+                  </div>
+                )}
                 {isDeleted && (
                   <div className="meta-item">
                     <span className="meta-label">Удален:</span>
@@ -142,37 +153,55 @@ function UserDetail({ user, onBack, onUserAction }) {
             </div>
           </div>
 
-          <div className="user-actions">
-            <h3>Действия</h3>
-            <div className="action-buttons">
-              {isDeleted ? (
-                <button
-                  className="btn btn-success"
-                  onClick={() => onUserAction('restore', user.id)}
-                >
-                  Восстановить пользователя
-                </button>
-              ) : (
-                <button
-                  className="btn btn-danger"
-                  onClick={() => onUserAction('delete', user.id)}
-                  disabled={userRoles.includes('admin')}
-                >
-                  Удалить пользователя
-                </button>
-              )}
+          {!isAdminUser && (
+            <div className="user-actions">
+              <h3>Действия</h3>
+              <div className="action-buttons">
+                {isDeleted ? (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => onUserAction('restore', user.id)}
+                  >
+                    Восстановить пользователя
+                  </button>
+                ) : (
+                  <>
+                    {isBanned ? (
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => onUserAction('unban', user.id)}
+                      >
+                        Разблокировать
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-outline"
+                        onClick={() => onUserAction('ban', user.id)}
+                      >
+                        Заблокировать
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-danger"
+                      onClick={() => onUserAction('delete', user.id)}
+                    >
+                      Удалить пользователя
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="user-detail__sidebar">
           <div className="user-posts">
             <h3>Публикации ({userPosts.length})</h3>
             {loading ? (
-              <div className="loading">Загрузка...</div>
+              <EmptyState title="Загрузка публикаций" />
             ) : userPosts.length > 0 ? (
               <div className="posts-list">
-                {userPosts.slice(0, 5).map(post => (
+                {userPosts.slice(0, 1).map(post => (
                   <div key={post.id} className="post-item">
                     <div className="post-content">
                       <h4 className="post-title">{post.post_title}</h4>
@@ -184,56 +213,31 @@ function UserDetail({ user, onBack, onUserAction }) {
                       </p>
                     </div>
                     {post.image_url && (
-                      <img
+                      <MediaPreview
                         src={post.image_url}
+                        mediaType={post.media_type}
                         alt={post.post_title}
                         className="post-thumbnail"
                       />
                     )}
                   </div>
                 ))}
-                {userPosts.length > 5 && (
-                  <p className="more-posts">
-                    И еще {userPosts.length - 5} публикаций...
-                  </p>
-                )}
+                <button
+                  className="btn btn-outline"
+                  onClick={() => onShowUserPosts?.(user)}
+                >
+                  Посмотреть публикации пользователя
+                </button>
               </div>
             ) : (
-              <p className="empty-state">Нет публикаций</p>
+              <EmptyState
+                title="Нет публикаций"
+                text="У пользователя пока нет работ для отображения."
+                actions={<button className="admin-btn admin-btn-outline admin-btn-sm" onClick={onBack}>К списку пользователей</button>}
+              />
             )}
           </div>
 
-          <div className="user-comments">
-            <h3>Комментарии ({userComments.length})</h3>
-            {loading ? (
-              <div className="loading">Загрузка...</div>
-            ) : userComments.length > 0 ? (
-              <div className="comments-list">
-                {userComments.slice(0, 5).map(comment => (
-                  <div key={comment.id} className="comment-item">
-                    <p className="comment-content">
-                      {comment.comment_content.length > 100 
-                        ? comment.comment_content.substring(0, 100) + '...'
-                        : comment.comment_content
-                      }
-                    </p>
-                    <p className="comment-meta">
-                      {formatDate(comment.created_at)} • 
-                      {comment.deleted_at ? ' Удален' : ' Активен'}
-                      {comment.post && ` • К: "${comment.post.post_title}"`}
-                    </p>
-                  </div>
-                ))}
-                {userComments.length > 5 && (
-                  <p className="more-comments">
-                    И еще {userComments.length - 5} комментариев...
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="empty-state">Нет комментариев</p>
-            )}
-          </div>
         </div>
       </div>
     </div>

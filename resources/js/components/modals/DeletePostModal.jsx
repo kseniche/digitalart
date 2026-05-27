@@ -57,7 +57,7 @@ function DeletePostModal({ onClose, onConfirm, isDeleting }) {
           justifyContent: 'flex-end'
         }}>
           <button
-            className="btn btn-secondary"
+            className="btn btn-outline"
             disabled={isDeleting}
             onClick={onClose}
             style={{
@@ -68,15 +68,11 @@ function DeletePostModal({ onClose, onConfirm, isDeleting }) {
             Отмена
           </button>
           <button
-            className="btn"
+            className="btn btn-danger"
             disabled={isDeleting}
             onClick={onConfirm}
             style={{
-              background: '#7B0000',
-              color: 'white',
-              border: 'none',
               padding: '0.5rem 1.5rem',
-              borderRadius: '8px',
               cursor: isDeleting ? 'not-allowed' : 'pointer',
               opacity: isDeleting ? 0.6 : 1,
               fontFamily: 'JetBrains Mono, monospace'

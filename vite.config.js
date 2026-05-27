@@ -10,4 +10,8 @@ export default defineConfig({
         }),
         react(),
     ],
+    server: {
+        host: '127.0.0.1', // IPv4, чтобы совпадал с хостом Laravel (127.0.0.1:8000) и не было [::1]:5173
+        port: 5173,
+    },
 });

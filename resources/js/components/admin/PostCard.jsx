@@ -1,10 +1,16 @@
 import React from 'react';
+import MediaPreview from '../common/MediaPreview';
 
-function PostCard({ post, onAction }) {
+function PostCard({ post, onAction, showView = true }) {
   const isDeleted = post.deleted_at !== null;
+  const isApproved = post.moderation_status === 'approved';
+  const isPending = post.moderation_status === 'pending';
+  const isRejected = post.moderation_status === 'rejected';
+  const autoModerationPassed = post.auto_moderation_passed !== false;
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('ru-RU', {
+    if (!dateString) return '—';
+    return new Date(dateString).toLocaleString('ru-RU', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -12,6 +18,15 @@ function PostCard({ post, onAction }) {
       minute: '2-digit'
     });
   };
+
+  const isScheduled = post.published_at && new Date(post.published_at) > new Date();
+  const publicationLabel = post.is_draft
+    ? 'Черновик'
+    : isScheduled
+      ? `Запланировано на ${formatDate(post.published_at)}`
+      : post.published_at
+        ? `Опубликован: ${formatDate(post.published_at)}`
+        : null;
 
   const truncateText = (text, maxLength = 150) => {
     if (!text) return '';
@@ -58,16 +73,35 @@ function PostCard({ post, onAction }) {
             <h4 className="author-name">
               {post.author?.name} {post.author?.user_surname}
             </h4>
-            <p className="admin-post-date">{formatDate(post.created_at)}</p>
+            <p className="admin-post-date">
+              Создан: {formatDate(post.created_at)}
+              {publicationLabel && (
+                <span style={{ display: 'block', marginTop: '0.25rem', fontSize: '0.85em', opacity: 0.9 }}>
+                  {publicationLabel}
+                </span>
+              )}
+            </p>
           </div>
         </div>
-        {isDeleted && <div className="deleted-badge">Удалена</div>}
+        <div className="admin-status-row">
+          {post.author_deleted && <span className="admin-status-badge admin-status-badge--rejected">Автор удален</span>}
+          {isPending && <span className="admin-status-badge admin-status-badge--pending">На модерации</span>}
+          {isApproved && <span className="admin-status-badge admin-status-badge--approved">Одобрено</span>}
+          {isRejected && <span className="admin-status-badge admin-status-badge--rejected">Отклонено</span>}
+          {autoModerationPassed ? (
+            <span className="admin-status-badge admin-status-badge--approved">Авто: пройдено</span>
+          ) : (
+            <span className="admin-status-badge admin-status-badge--rejected">Авто: не пройдено</span>
+          )}
+          {isDeleted && <div className="deleted-badge">Удалена</div>}
+        </div>
       </div>
 
       {post.image_url && (
         <div className="admin-post-image">
-          <img
+          <MediaPreview
             src={post.image_url}
+            mediaType={post.media_type}
             alt={post.post_title}
             className="admin-post-thumbnail"
           />
@@ -79,6 +113,9 @@ function PostCard({ post, onAction }) {
         <p className="admin-post-content">
           {truncateText(post.post_content || '')}
         </p>
+        {!autoModerationPassed && post.auto_moderation_reason && (
+          <p className="admin-post-preview">Причина автомодерации: {truncateText(post.auto_moderation_reason, 180)}</p>
+        )}
 
         {tags.length > 0 && (
           <div className="admin-post-tags">
@@ -87,6 +124,12 @@ function PostCard({ post, onAction }) {
                 #{tag}
               </span>
             ))}
+          </div>
+        )}
+
+        {post.category?.name && (
+          <div className="admin-post-tags" style={{ marginTop: '0.75rem' }}>
+            <span className="admin-tag">Категория: {post.category.name}</span>
           </div>
         )}
       </div>
@@ -101,20 +144,41 @@ function PostCard({ post, onAction }) {
       </div>
 
       <div className="admin-post-card__actions">
-        {isDeleted ? (
+        {showView && (
           <button
-            className="admin-btn admin-btn-success admin-btn-sm"
-            onClick={() => onAction('restore', post.id)}
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={() => onAction('view', post.id)}
           >
-            Восстановить
+            Просмотреть
           </button>
-        ) : (
+        )}
+        {!isDeleted && !isApproved && (
           <button
-            className="admin-btn admin-btn-danger admin-btn-sm"
-            onClick={() => onAction('delete', post.id)}
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => onAction('approve', post.id)}
           >
-            Удалить
+            Одобрить
           </button>
+        )}
+        {!isDeleted && (
+          <>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => onAction('reject', post.id)}
+            >
+              Отклонить
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger btn-sm"
+              onClick={() => onAction('delete', post.id)}
+            >
+              Удалить за нарушение
+            </button>
+          </>
         )}
       </div>
     </div>

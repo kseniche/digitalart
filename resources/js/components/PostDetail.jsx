@@ -1,37 +1,68 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
+import { apiFetch } from '../api';
 import EditPostModal from './modals/EditPostModal';
 import DeletePostModal from './modals/DeletePostModal';
+import LoginModal from './modals/LoginModal';
+import RegisterModal from './modals/RegisterModal';
+import EmptyState from './common/EmptyState';
+import Alert from './common/Alert';
+import MediaPreview from './common/MediaPreview';
+import MasonryGrid from './common/MasonryGrid';
+import MasonryRecommendationCard from './MasonryRecommendationCard';
 import '../../css/app.css';
 
 function PostDetail() {
+  const COMMENT_COOLDOWN_MS = 10000;
   const { id } = useParams();
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
+  const toast = useToast().toast;
   const [post, setPost] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [likes, setLikes] = useState(0);
+  const [isFavorited, setIsFavorited] = useState(false);
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [error, setError] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
+  const [editSaveErrors, setEditSaveErrors] = useState({});
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isCommentSubmitting, setIsCommentSubmitting] = useState(false);
+  const [nextCommentAllowedAt, setNextCommentAllowedAt] = useState(0);
+  const [commentsSort, setCommentsSort] = useState('new');
+  const [recommendations, setRecommendations] = useState([]);
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const isCommentCooldownActive = Date.now() < nextCommentAllowedAt;
 
   // Проверяем, является ли текущий пользователь автором поста
   const isOwnPost = post && user && post.author?.id === user.id;
+  /** Отклонённая модерацией публикация: без ленты соц.действий, комментариев и рекомендаций */
+  const isRejectedUnpublished = post?.moderation_status === 'rejected';
+  const isApprovedPublished = !!post
+    && !post.is_draft
+    && post.moderation_status === 'approved'
+    && (!post.published_at || new Date(post.published_at) <= new Date());
+
+  const lockPublishSettings = !!post
+    && !post.is_draft
+    && post.moderation_status === 'approved';
+
+  const commentsSortInitialized = useRef(false);
 
   const handleLike = async () => {
     if (!isAuthenticated) return setShowLoginModal(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/posts/${id}/like`, {
+      const response = await apiFetch(`/api/posts/${id}/like`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+        headers: { 'Accept': 'application/json' }
       });
       if (response.ok) {
         const result = await response.json();
@@ -46,10 +77,61 @@ function PostDetail() {
         }
         setError('');
       } else {
-        setError('Не удалось поставить лайк. Попробуйте позже.');
+        const msg = 'Не удалось поставить лайк. Попробуйте позже.';
+        setError(msg);
+        toast.error(msg);
       }
-    } catch (error) {
-      setError('Ошибка соединения с сервером');
+    } catch (err) {
+      const msg = 'Ошибка соединения с сервером';
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
+  const handleFavorite = async () => {
+    if (!isAuthenticated) return setShowLoginModal(true);
+    const prev = isFavorited;
+    setIsFavorited(!prev);
+    try {
+      const response = await apiFetch(`/api/posts/${id}/favorite`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (response.ok) {
+        const result = await response.json();
+        setIsFavorited(!!result.is_favorited);
+      } else {
+        setIsFavorited(prev);
+        toast.error('Не удалось изменить избранное');
+      }
+    } catch {
+      setIsFavorited(prev);
+      toast.error('Ошибка соединения');
+    }
+  };
+
+  const handleCommentLike = async (commentId) => {
+    if (!isAuthenticated) return setShowLoginModal(true);
+    const comment = comments.find((c) => c.id === commentId);
+    if (!comment) return;
+    const prevLiked = comment.is_liked;
+    const prevCount = comment.likes_count;
+    setComments(prev => prev.map(c => c.id === commentId ? { ...c, is_liked: !prevLiked, likes_count: prevCount + (prevLiked ? -1 : 1) } : c));
+    try {
+      const res = await apiFetch(`/api/comments/${commentId}/like`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setComments(prev => prev.map(c => c.id === commentId ? { ...c, is_liked: !!data.liked, likes_count: data.likes_count ?? c.likes_count } : c));
+      } else {
+        setComments(prev => prev.map(c => c.id === commentId ? { ...c, is_liked: prevLiked, likes_count: prevCount } : c));
+        toast.error('Не удалось поставить лайк');
+      }
+    } catch {
+      setComments(prev => prev.map(c => c.id === commentId ? { ...c, is_liked: prevLiked, likes_count: prevCount } : c));
+      toast.error('Ошибка соединения');
     }
   };
 
@@ -57,13 +139,23 @@ function PostDetail() {
     e.preventDefault();
     if (!isAuthenticated) return setShowLoginModal(true);
     if (!newComment.trim()) return;
+    if (isCommentSubmitting) return;
+
+    const now = Date.now();
+    if (now < nextCommentAllowedAt) {
+      const secondsLeft = Math.ceil((nextCommentAllowedAt - now) / 1000);
+      const msg = `Комментарий можно отправить через ${secondsLeft} сек.`;
+      setError(msg);
+      toast.error(msg);
+      return;
+    }
+
+    setIsCommentSubmitting(true);
 
     try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`/api/posts/${id}/comments`, {
+        const response = await apiFetch(`/api/posts/${id}/comments`, {
             method: 'POST',
             headers: { 
-                'Authorization': `Bearer ${token}`, 
                 'Content-Type': 'application/json', 
                 'Accept': 'application/json' 
             },
@@ -71,59 +163,106 @@ function PostDetail() {
         });
         
         if (response.ok) {
-            const result = await response.json();
-            setComments(prev => [...prev, {
-                id: result.comment.id,
-                author: `${user.name} ${user.user_surname || ''}`.trim(),
-                avatar: user.avatar_url || user.avatar || '/default-avatar.svg',
-                text: result.comment.content || result.comment.comment_content,
-                createdAt: result.comment.created_at
-            }]);
+            const data = await response.json();
+            const createdComment = data?.comment;
+
+            if (createdComment?.id && createdComment?.auto_moderation_passed === true) {
+              const commentForState = {
+                id: createdComment.id,
+                author: createdComment.author
+                  ? `${createdComment.author.name || ''} ${createdComment.author.surname || ''}`.trim() || 'Неизвестный автор'
+                  : 'Неизвестный автор',
+                avatar: createdComment.author?.avatar || user?.avatar_url || user?.avatar || '/default-avatar.svg',
+                text: createdComment.content || newComment,
+                createdAt: createdComment.created_at || new Date().toISOString(),
+                likes_count: 0,
+                is_liked: false,
+              };
+
+              setComments((prev) => commentsSort === 'popular' ? [...prev, commentForState] : [commentForState, ...prev]);
+            }
+
             setNewComment('');
             setError('');
+            setNextCommentAllowedAt(Date.now() + COMMENT_COOLDOWN_MS);
+            toast.success(data?.message || 'Комментарий отправлен');
         } else {
-            setError('Не удалось отправить комментарий. Попробуйте позже.');
+            const msg = 'Не удалось отправить комментарий. Попробуйте позже.';
+            setError(msg);
+            toast.error(msg);
         }
-    } catch (error) {
-        setError('Ошибка соединения с сервером');
+    } catch (err) {
+        const msg = 'Ошибка соединения с сервером';
+        setError(msg);
+        toast.error(msg);
+    } finally {
+      setIsCommentSubmitting(false);
     }
   };
 
-  useEffect(() => {
-    const loadPost = async () => {
-        if (!id) return setIsLoading(false);
-        setIsLoading(true);
-        try {
-            const response = await fetch(`/api/posts/${id}`);
-            if (response.ok) {
-                const postData = await response.json();
-                setPost(postData);
-                setLikes(postData.like_count || 0);
-                setIsLiked(!!postData.liked);
-                
-                const formattedComments = (postData.comments || []).map(comment => ({
-                    id: comment.id,
-                    author: comment.author ? 
-                      `${comment.author.name} ${comment.author.user_surname || ''}`.trim() : 
-                      'Неизвестный автор',
-                    avatar: comment.author?.avatar_url || comment.author?.avatar || '/default-avatar.svg',
-                    text: comment.comment_content || '',
-                    createdAt: comment.created_at
-                }));
-                
-                setComments(formattedComments);
-            } else {
-                setPost(null);
-            }
-        } catch (error) {
-            console.error('Error loading post:', error);
-            setPost(null);
-        } finally {
-            setIsLoading(false);
+  const mapComments = React.useCallback((postData) => (postData.comments || []).map(comment => ({
+    id: comment.id,
+    author: comment.author ? `${comment.author.name} ${comment.author.user_surname || ''}`.trim() : 'Неизвестный автор',
+    avatar: comment.author?.avatar_url || comment.author?.avatar || '/default-avatar.svg',
+    text: comment.comment_content || '',
+    createdAt: comment.created_at,
+    likes_count: comment.likes_count ?? 0,
+    is_liked: !!comment.is_liked,
+  })), []);
+
+  const fetchPostData = React.useCallback(async (sort, { commentsOnly = false } = {}) => {
+    if (!id) return setIsLoading(false);
+    if (!commentsOnly) setIsLoading(true);
+    try {
+      const response = await apiFetch(`/api/posts/${id}?comments_sort=${sort}`, { headers: { 'Accept': 'application/json' } });
+      if (response.ok) {
+        const postData = await response.json();
+        if (commentsOnly) {
+          setComments(mapComments(postData));
+        } else {
+          setPost(postData);
+          setLikes(postData.like_count || 0);
+          setIsLiked(!!postData.liked);
+          setIsFavorited(!!postData.is_favorited);
+          setComments(mapComments(postData));
         }
-    };
-    loadPost();
-}, [id]);
+      } else if (!commentsOnly) {
+        setPost(null);
+      }
+    } catch (error) {
+      console.error('Error loading post:', error);
+      if (!commentsOnly) setPost(null);
+    } finally {
+      if (!commentsOnly) setIsLoading(false);
+    }
+  }, [id, mapComments]);
+
+  // Рекомендации «Вам может понравиться» (критерий 3.9) — не для отклонённых публикаций
+  useEffect(() => {
+    if (!id || !post || post.moderation_status === 'rejected') {
+      setRecommendations([]);
+      return;
+    }
+    apiFetch(`/api/recommendations?post_id=${id}`, { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setRecommendations(Array.isArray(data) ? data : []))
+      .catch(() => setRecommendations([]));
+  }, [id, post?.id, post?.moderation_status]);
+
+  useEffect(() => {
+    commentsSortInitialized.current = false;
+    fetchPostData(commentsSort);
+  }, [id, fetchPostData]);
+
+  useEffect(() => {
+    if (!commentsSortInitialized.current) {
+      commentsSortInitialized.current = true;
+      return;
+    }
+    if (post) {
+      fetchPostData(commentsSort, { commentsOnly: true });
+    }
+  }, [commentsSort, post, fetchPostData]);
 
   // Обработка сохранения изменений
   const handleSaveEdit = async (formData) => {
@@ -131,18 +270,19 @@ function PostDetail() {
     setError('');
     
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/posts/${id}`, {
+      const response = await apiFetch(`/api/posts/${id}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
         body: JSON.stringify({
           title: formData.title,
           description: formData.description,
-          tags: formData.tags
+          tags: formData.tags,
+          ...(formData.category_id ? { category_id: Number(formData.category_id) } : {}),
+          ...(!lockPublishSettings && typeof formData.is_draft === 'boolean' ? { is_draft: formData.is_draft } : {}),
+          ...(!lockPublishSettings && !formData.is_draft ? { published_at: formData.publish_mode === 'schedule' && formData.published_at ? new Date(formData.published_at).toISOString() : null } : {})
         })
       });
 
@@ -152,14 +292,18 @@ function PostDetail() {
         try {
           const errorData = JSON.parse(errorText);
           errorMessage = errorData.message || errorMessage;
+          if (response.status === 422 && errorData.errors && typeof errorData.errors === 'object') {
+            setEditSaveErrors(errorData.errors);
+          }
         } catch (e) {
           // ignore
         }
         throw new Error(errorMessage);
       }
+      setEditSaveErrors({});
 
       // Перезагружаем пост для получения актуальных данных
-      const reloadResponse = await fetch(`/api/posts/${id}`);
+      const reloadResponse = await apiFetch(`/api/posts/${id}`, { headers: { 'Accept': 'application/json' } });
       if (reloadResponse.ok) {
         const postData = await reloadResponse.json();
         setPost(postData);
@@ -167,8 +311,11 @@ function PostDetail() {
       
       setShowEditModal(false);
       setError('');
+      setEditSaveErrors({});
     } catch (e) {
-      setError(e.message || 'Ошибка сохранения изменений');
+      const msg = e.message || 'Ошибка сохранения изменений';
+      setError(msg);
+      toast.error(msg);
       throw e;
     } finally {
       setIsSaving(false);
@@ -181,11 +328,9 @@ function PostDetail() {
     setError('');
     
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/posts/${id}`, {
+      const response = await apiFetch(`/api/posts/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Accept': 'application/json',
         },
       });
@@ -205,138 +350,123 @@ function PostDetail() {
       // Успешно удалено - перенаправляем на главную
       navigate('/');
     } catch (e) {
-      setError(e.message || 'Ошибка удаления публикации');
+      const msg = e.message || 'Ошибка удаления публикации';
+      setError(msg);
+      toast.error(msg);
       setIsDeleting(false);
       setShowDeleteModal(false);
     }
   };
 
+  const handlePublish = async () => {
+    setIsPublishing(true);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/posts/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ is_draft: false }),
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        let msg = 'Не удалось опубликовать';
+        try { const d = JSON.parse(errText); msg = d.message || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      toast.success('Публикация опубликована');
+      await loadPost();
+    } catch (e) {
+      const msg = e.message || 'Ошибка публикации';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
   if (isLoading) return <div className="main-content"><div className="loading-state">Загрузка...</div></div>;
-  if (!post) return <div className="main-content"><div className="empty-state">Работа не найдена</div></div>;
-  if (!isAuthenticated) return <div className="main-content"><div className="empty-state">Необходима авторизация</div></div>;
+  if (!post) {
+    return (
+      <div className="main-content">
+        <EmptyState
+          title="Работа не найдена"
+          text="Публикация могла быть удалена или перемещена."
+          actions={<button className="btn btn-primary" onClick={() => navigate('/')}>На главную</button>}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="main-content" style={{ 
-      display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'flex-start',
-      padding: '2rem 1rem',
-      minHeight: 'calc(100vh - 120px)'
-    }}>
-      <div style={{
-        position: 'relative',
-        backgroundColor: '#DEDDD8',
-        borderRadius: '16px',
-        border: '1px solid #D4D1CC',
-        maxWidth: '1100px',
-        width: '100%',
-        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.1)',
-        overflow: 'hidden'
-      }}>
+    <div className="main-content post-detail-shell">
+      <div className="post-detail-card">
         {/* Кнопка закрытия */}
         <button
           onClick={() => window.history.back()}
+          className="ui-icon-btn"
           style={{
             position: 'absolute',
             top: '1rem',
             right: '1rem',
-            width: '36px',
-            height: '36px',
-            borderRadius: '50%',
-            border: 'none',
-            backgroundColor: '#D4D1CC',
-            color: '#111827',
-            fontSize: '1.5rem',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             zIndex: 10,
-            transition: 'all 0.2s',
             fontFamily: 'JetBrains Mono, monospace',
             fontWeight: 'bold'
-          }}
-          onMouseEnter={(e) => {
-            e.target.style.backgroundColor = '#7B0000';
-            e.target.style.color = '#DEDDD8';
-          }}
-          onMouseLeave={(e) => {
-            e.target.style.backgroundColor = '#D4D1CC';
-            e.target.style.color = '#111827';
           }}
         >
           ×
         </button>
 
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: '1fr 1fr', 
-        gap: '0',
-        minHeight: '600px'
-      }}>
+      <div className="post-detail-grid">
         {/* Левая часть - изображение */}
-        <div style={{
-          backgroundColor: '#DEDDD8',
-          padding: '1.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRight: '1px solid #D4D1CC'
-        }}>
-      <img 
-    src={post.image_url || post.media_path || '/images/digital-art-1.svg'} 
-    alt={post.post_title} 
-            style={{ 
-              maxWidth: '100%', 
+        <div className="post-detail-media-col">
+          <MediaPreview
+            src={post.image_url || post.media_path}
+            mediaType={post.media_type}
+            alt={post.post_title}
+            style={{
+              maxWidth: '100%',
               maxHeight: '600px',
               borderRadius: '8px',
               objectFit: 'contain',
-              cursor: 'pointer'
-            }}
-            onClick={(e) => {
-              window.open(e.target.src, '_blank');
+              cursor: post.media_type === 'video' ? 'default' : 'pointer'
             }}
           />
         </div>
 
         {/* Правая часть - информация */}
-        <div style={{
-          backgroundColor: '#DEDDD8',
-          padding: '2rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1rem',
-          maxHeight: '600px',
-          overflowY: 'auto'
-        }}>
-          <div style={{
-            paddingBottom: '1rem',
-            borderBottom: '1px solid #D4D1CC'
-          }}>
+        <div className="post-detail-info-col">
+          {post.is_draft && (
+            <div className="post-state-badge">
+              Черновик
+            </div>
+          )}
+          {!post.is_draft && post.published_at && new Date(post.published_at) > new Date() && (
+            <div className="post-state-badge">
+              Запланировано на {new Date(post.published_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}
+            </div>
+          )}
+          {post.moderation_status === 'rejected' && (
+            <div className="post-rejected-box">
+              <div className="post-rejected-title">Публикация отклонена модерацией</div>
+              <div className="post-rejected-label">Причина:</div>
+              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {(post.moderation_rejection_reason && String(post.moderation_rejection_reason).trim()) || 'Нарушает правила сообщества.'}
+              </div>
+            </div>
+          )}
+          <div className="post-author-block">
             {isAuthenticated && post.author?.id ? (
               <Link 
                 to={`/profile/${post.author.id}`} 
-                style={{ 
-                  textDecoration: 'none', 
-                  color: 'inherit',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  transition: 'opacity 0.2s'
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
-                onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                className="post-author-link"
               >
-                <img 
+                <img
                   src={post.author?.avatar_url || post.author?.avatar || '/default-avatar.svg'}
                   alt={post.author?.name || 'Автор'}
-                  style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '50%',
-                    border: '2px solid #D4D1CC',
-                    objectFit: 'cover'
-                  }}
+                  className="post-author-avatar"
                   onError={(e) => {
                     e.target.src = '/default-avatar.svg';
                   }}
@@ -358,16 +488,10 @@ function PostDetail() {
                 alignItems: 'center',
                 gap: '0.75rem'
               }}>
-                <img 
+                <img
                   src={post.author?.avatar_url || post.author?.avatar || '/default-avatar.svg'}
                   alt={post.author?.name || 'Автор'}
-                  style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '50%',
-                    border: '2px solid #D4D1CC',
-                    objectFit: 'cover'
-                  }}
+                  className="post-author-avatar"
                   onError={(e) => {
                     e.target.src = '/default-avatar.svg';
                   }}
@@ -386,113 +510,84 @@ function PostDetail() {
             )}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-            <h2 style={{ 
-              fontSize: '1.25rem', 
-              fontWeight: 'bold', 
-              color: '#111827',
-              fontFamily: 'JetBrains Mono, monospace',
-              margin: 0,
-              flex: 1
-            }}>
+          <div className="post-detail-title-row">
+            <h2 className="post-detail-title">
               {post.post_title}
             </h2>
             {isOwnPost && (
-              <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
-                <button
-                  onClick={() => setShowEditModal(true)}
-                  style={{
-                    background: 'none',
-                    border: '1px solid #D4D1CC',
-                    borderRadius: '8px',
-                    padding: '0.5rem 1rem',
-                    cursor: 'pointer',
-                    color: '#111827',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: '0.85rem',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = '#D4D1CC';
-                    e.target.style.borderColor = '#7B0000';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = 'transparent';
-                    e.target.style.borderColor = '#D4D1CC';
-                  }}
-                >
-                  Редактировать
-                </button>
-                <button
-                  onClick={() => setShowDeleteModal(true)}
-                  style={{
-                    background: '#7B0000',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '0.5rem 1rem',
-                    cursor: 'pointer',
-                    color: 'white',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: '0.85rem',
-                    transition: 'opacity 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.opacity = '0.8';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.opacity = '1';
-                  }}
-                >
-                  Удалить
-                </button>
+              <div className="post-detail-actions">
+                {post.is_draft ? (
+                  <>
+                    <button
+                      onClick={() => setShowDeleteModal(true)}
+                      className="btn btn-danger btn-sm"
+                    >
+                      Удалить
+                    </button>
+                    <button
+                      onClick={() => setShowEditModal(true)}
+                      className="btn btn-outline btn-sm"
+                    >
+                      Редактировать
+                    </button>
+                    <button
+                      onClick={handlePublish}
+                      disabled={isPublishing}
+                      className="btn btn-primary btn-sm"
+                      style={{ opacity: isPublishing ? 0.7 : 1 }}
+                    >
+                      {isPublishing ? 'Публикация…' : 'Опубликовать'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setShowEditModal(true)}
+                      className="btn btn-outline btn-sm"
+                    >
+                      Редактировать
+                    </button>
+                    <button
+                      onClick={() => setShowDeleteModal(true)}
+                      className="btn btn-danger btn-sm"
+                    >
+                      Удалить
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
 
-          <div style={{
-            fontSize: '0.85rem',
-            color: '#6b7280',
-            fontFamily: 'JetBrains Mono, monospace',
-            marginBottom: '0.5rem'
-          }}>
+          <div className="post-detail-meta">
             {new Date(post.created_at).toLocaleDateString('ru-RU', {
               day: 'numeric',
               month: 'long',
               year: 'numeric'
             })}
+            {(typeof post.category === 'string' ? post.category : post.category?.name) && (
+              <span className="post-detail-category">· {typeof post.category === 'string' ? post.category : post.category?.name}</span>
+            )}
           </div>
 
-          <p style={{ 
-            color: '#374151', 
-            lineHeight: '1.5',
-            fontFamily: 'JetBrains Mono, monospace',
-            margin: 0,
-            fontSize: '0.85rem',
-            marginBottom: '1rem'
-          }}>
-            {post.post_content}
-          </p>
+          {post.post_content_html != null ? (
+            <div
+              className="post-content-html post-detail-content"
+              dangerouslySetInnerHTML={{ __html: post.post_content_html || '' }}
+            />
+          ) : (
+            <p className="post-detail-content">
+              {post.post_content}
+            </p>
+          )}
 
           {/* Теги */}
           {post.tags && post.tags.length > 0 && (
-            <div style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '0.5rem',
-              marginBottom: '1rem'
-            }}>
+            <div className="post-detail-tags">
               {(Array.isArray(post.tags) ? post.tags : post.tags.split(',')).map((tag, index) => (
                 <span
                   key={index}
-                  style={{
-                    backgroundColor: '#D4D1CC',
-                    color: '#7B0000',
-                    padding: '0.25rem 0.75rem',
-                    borderRadius: '16px',
-                    fontSize: '0.75rem',
-                    fontWeight: '500',
-                    fontFamily: 'JetBrains Mono, monospace'
-                  }}
+                  className="post-detail-tag"
                 >
                   #{typeof tag === 'string' ? tag.trim() : tag}
                 </span>
@@ -500,112 +595,51 @@ function PostDetail() {
             </div>
           )}
 
-          <div style={{ 
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1rem',
-            paddingTop: '1rem',
-            paddingBottom: '1rem',
-            borderTop: '1px solid #D4D1CC',
-            borderBottom: '1px solid #D4D1CC'
-          }}>
+          {isApprovedPublished && !isRejectedUnpublished && (
+          <div className="post-detail-social-row">
             <button
               onClick={handleLike}
+              className="ui-inline-action"
               style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
                 color: isLiked ? '#7B0000' : '#6b7280',
                 fontFamily: 'JetBrains Mono, monospace',
                 fontSize: '0.9rem',
-                padding: '0.5rem',
-                borderRadius: '8px',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#D4D1CC';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
               }}
             >
               <span style={{ fontSize: '1.2rem' }}>{isLiked ? '❤️' : '🤍'}</span>
               {isLiked ? 'Нравится' : 'Нравится'} ({likes})
             </button>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: '#6b7280',
-              fontFamily: 'JetBrains Mono, monospace',
-              fontSize: '0.9rem'
-            }}>
+            <button
+              onClick={handleFavorite}
+              className="ui-inline-action"
+              style={{
+                color: isFavorited ? '#7B0000' : '#6b7280',
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: '0.9rem',
+              }}
+              title={isFavorited ? 'Убрать из избранного' : 'В избранное'}
+            >
+              <span style={{ fontSize: '1.2rem' }}>{isFavorited ? '🔖' : '📑'}</span>
+              {isFavorited ? 'В избранном' : 'В избранное'}
+            </button>
+            <div className="post-detail-comments-count">
               Комментарии: {comments.length}
             </div>
           </div>
+          )}
 
-          {/* Комментарии в компактном виде */}
-          <div style={{
-            marginTop: '1rem'
-          }}>
+          {/* Комментарии — только для опубликованных и не отклонённых постов */}
+          {isApprovedPublished && !isRejectedUnpublished && (
+          <div className="post-comments-wrap">
             {/* Сообщение об ошибке */}
-            {error && (
-              <div style={{
-                backgroundColor: '#f5f5f5',
-                border: '1px solid #7B0000',
-                borderRadius: '8px',
-                padding: '0.75rem',
-                marginBottom: '1rem',
-                color: '#7B0000',
-                fontSize: '0.875rem',
-                fontFamily: 'JetBrains Mono, monospace',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}>
-                {error}
-                <button
-                  onClick={() => setError('')}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#7B0000',
-                    cursor: 'pointer',
-                    fontSize: '1.25rem',
-                    lineHeight: 1,
-                    padding: 0
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            )}
+            <Alert type="error" message={error} onClose={() => setError('')} />
 
-            <form onSubmit={handleComment} style={{ marginBottom: '1rem' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.75rem',
-                backgroundColor: '#D4D1CC',
-                borderRadius: '8px',
-                border: '2px solid transparent',
-                transition: 'border-color 0.2s'
-              }}
-              >
+            <form onSubmit={handleComment} className="post-comment-form">
+              <div className="post-comment-input-row">
                 <img 
                   src={user?.avatar_url || user?.avatar || '/default-avatar.svg'}
                   alt="Вы"
-                  style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    border: '2px solid #DEDDD8',
-                    objectFit: 'cover'
-                  }}
+                  className="post-avatar-sm"
                   onError={(e) => {
                     e.target.src = '/default-avatar.svg';
                   }}
@@ -615,117 +649,153 @@ function PostDetail() {
                   value={newComment} 
                   onChange={e => setNewComment(e.target.value)}
                   placeholder="Оставить комментарий..."
-                  style={{
-                    flex: 1,
-                    border: 'none',
-                    background: 'transparent',
-                    outline: 'none',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: '0.85rem',
-                    color: '#111827'
-                  }}
-                  onFocus={(e) => e.target.parentElement.style.borderColor = '#7B0000'}
-                  onBlur={(e) => e.target.parentElement.style.borderColor = 'transparent'}
+                  className="post-comment-input"
                 />
                 <button 
                   type="submit"
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: '#7B0000',
-                    fontSize: '1.2rem',
-                    padding: '0.25rem',
-                    lineHeight: 1
-                  }}
+                  disabled={isCommentSubmitting || isCommentCooldownActive}
+                  className="post-comment-submit"
                 >
                   →
                 </button>
               </div>
       </form>
 
-            <div style={{
-              maxHeight: '250px',
-              overflowY: 'auto'
-            }}>
+            <div className="profile-tabs" style={{ marginBottom: '0.75rem' }}>
+              <span className="ui-form-help" style={{ marginTop: 0 }}>Сортировка:</span>
+              <button
+                type="button"
+                onClick={() => setCommentsSort('new')}
+                style={{
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: '8px',
+                  border: commentsSort === 'new' ? '2px solid #7B0000' : '1px solid #D4D1CC',
+                  background: commentsSort === 'new' ? 'rgba(123, 0, 0, 0.08)' : '#DEDDD8',
+                  color: commentsSort === 'new' ? '#7B0000' : '#111827',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: '0.8rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Сначала новые
+              </button>
+              <button
+                type="button"
+                onClick={() => setCommentsSort('popular')}
+                style={{
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: '8px',
+                  border: commentsSort === 'popular' ? '2px solid #7B0000' : '1px solid #D4D1CC',
+                  background: commentsSort === 'popular' ? 'rgba(123, 0, 0, 0.08)' : '#DEDDD8',
+                  color: commentsSort === 'popular' ? '#7B0000' : '#111827',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: '0.8rem',
+                  cursor: 'pointer'
+                }}
+              >
+                По популярности
+              </button>
+            </div>
+
+            <div className="post-comments-list">
       {comments.map(c => (
                 <div 
                   key={c.id}
-                  style={{
-                    padding: '0.75rem',
-                    display: 'flex',
-                    gap: '0.75rem',
-                    alignItems: 'flex-start'
-                  }}
+                  className="post-comment-item"
                 >
                   <img 
                     src={c.avatar} 
                     alt={c.author}
-                    style={{
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      border: '2px solid #D4D1CC',
-                      objectFit: 'cover',
-                      flexShrink: 0
-                    }}
+                    className="post-avatar-sm"
                     onError={(e) => {
                       e.target.src = '/default-avatar.svg';
                     }}
                   />
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'baseline',
-                      gap: '0.5rem',
-                      marginBottom: '0.25rem'
-                    }}>
-                      <strong style={{ 
-                        color: '#111827',
-                        fontFamily: 'JetBrains Mono, monospace',
-                        fontSize: '0.8rem',
-                        fontWeight: '600'
-                      }}>
+                  <div className="post-comment-body">
+                    <div className="post-comment-author-row">
+                      <strong className="post-comment-author">
                         {c.author}
                       </strong>
                     </div>
-                    <p style={{ 
-                      color: '#374151',
-                      fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: '0.8rem',
-                      margin: 0,
-                      lineHeight: '1.4'
-                    }}>
+                    <p className="post-comment-text">
                       {c.text}
                     </p>
+                    {isAuthenticated && (
+                      <button
+                        type="button"
+                        onClick={() => handleCommentLike(c.id)}
+                        className="ui-inline-action"
+                        style={{
+                          marginTop: '0.35rem',
+                          padding: '0.2rem 0.35rem',
+                          fontSize: '0.75rem',
+                          color: c.is_liked ? '#7B0000' : '#6b7280',
+                          fontFamily: 'JetBrains Mono, monospace'
+                        }}
+                        title={c.is_liked ? 'Убрать лайк' : 'Нравится'}
+                      >
+                        {c.is_liked ? '❤️' : '🤍'} {c.likes_count ?? 0}
+                      </button>
+                    )}
+                    {!isAuthenticated && (c.likes_count ?? 0) > 0 && (
+                      <span style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#6b7280', fontFamily: 'JetBrains Mono, monospace' }}>
+                        🤍 {c.likes_count}
+                      </span>
+                    )}
                   </div>
         </div>
       ))}
 
               {comments.length === 0 && (
-                <div style={{ 
-                  padding: '2rem 1rem',
-                  textAlign: 'center',
-                  color: '#6b7280',
-                  fontSize: '0.85rem',
-                  fontFamily: 'JetBrains Mono, monospace'
-                }}>
-                  Комментариев пока нет
-                </div>
+                <EmptyState title="Комментариев пока нет" text="Будьте первым, кто оставит комментарий." compact />
               )}
             </div>
           </div>
+          )}
         </div>
       </div>
       </div>
 
-      {showLoginModal && <div className="modal-overlay">Вход required</div>}
+      {/* Вам может понравиться — только для опубликованных работ */}
+      {!isRejectedUnpublished && recommendations.length > 0 && (
+        <div className="post-recommend-wrap">
+          <h2 className="post-recommend-title">Вам может понравиться</h2>
+          <MasonryGrid>
+            {recommendations.map((rec) => (
+              <MasonryRecommendationCard key={rec.id} post={rec} />
+            ))}
+          </MasonryGrid>
+        </div>
+      )}
+
+      {showLoginModal && (
+        <LoginModal
+          onClose={() => setShowLoginModal(false)}
+          onLogin={() => setShowLoginModal(false)}
+          onSwitchToRegister={() => {
+            setShowLoginModal(false);
+            setShowRegisterModal(true);
+          }}
+        />
+      )}
+      {showRegisterModal && (
+        <RegisterModal
+          onClose={() => setShowRegisterModal(false)}
+          onRegister={() => setShowRegisterModal(false)}
+          onSwitchToLogin={() => {
+            setShowRegisterModal(false);
+            setShowLoginModal(true);
+          }}
+        />
+      )}
       
       {/* Модальные окна */}
       {showEditModal && (
         <EditPostModal
           post={post}
-          onClose={() => setShowEditModal(false)}
+          serverErrors={editSaveErrors}
+          lockPublishSettings={lockPublishSettings}
+          onClose={() => { setShowEditModal(false); setEditSaveErrors({}); }}
           onSave={handleSaveEdit}
         />
       )}

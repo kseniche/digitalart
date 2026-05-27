@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import Alert from '../common/Alert';
+
+/** Согласовано с App\Rules\PersonNameLetters: буквы; между частями — пробел, дефис или апостроф (' U+0027, ’ U+2019). */
+const PERSON_NAME_LETTERS_RE = /^[\p{L}]+(?:[ \u0027\u2019\-][\p{L}]+)*$/u;
 
 function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
   const { register } = useAuth();
@@ -32,12 +36,19 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
   const validateForm = () => {
     const newErrors = {};
 
-    if (!formData.firstName.trim()) {
+    const first = formData.firstName.trim();
+    const last = formData.lastName.trim();
+
+    if (!first) {
       newErrors.firstName = 'Имя обязательно';
+    } else if (!PERSON_NAME_LETTERS_RE.test(first)) {
+      newErrors.firstName = 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Jean-Pierre)';
     }
 
-    if (!formData.lastName.trim()) {
+    if (!last) {
       newErrors.lastName = 'Фамилия обязательна';
+    } else if (!PERSON_NAME_LETTERS_RE.test(last)) {
+      newErrors.lastName = "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Van der Berg, O'Brien)";
     }
 
     if (!formData.username.trim()) {
@@ -54,8 +65,8 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
 
     if (!formData.password) {
       newErrors.password = 'Пароль обязателен';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Пароль должен содержать минимум 6 символов';
+    } else if (formData.password.length < 8) {
+      newErrors.password = 'Пароль должен содержать минимум 8 символов';
     }
 
     if (!formData.confirmPassword) {
@@ -79,8 +90,8 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
     
     // Преобразуем данные для API
     const apiData = {
-      firstName: formData.firstName,
-      lastName: formData.lastName,
+      firstName: formData.firstName.trim(),
+      lastName: formData.lastName.trim(),
       username: formData.username,
       email: formData.email,
       password: formData.password,
@@ -93,7 +104,15 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
       if (result.success) {
         onRegister();
       } else {
-        setErrors({ general: result.error || 'Ошибка при регистрации. Попробуйте еще раз.' });
+        const nextErrors = { general: result.error || 'Ошибка при регистрации. Попробуйте еще раз.' };
+        if (result.errors && typeof result.errors === 'object') {
+          Object.keys(result.errors).forEach(key => {
+            const val = result.errors[key];
+            const msg = Array.isArray(val) ? val[0] : val;
+            nextErrors[key === 'passwordConfirmation' ? 'confirmPassword' : key] = msg;
+          });
+        }
+        setErrors(nextErrors);
       }
     } catch (error) {
       setErrors({ general: 'Ошибка при регистрации. Попробуйте еще раз.' });
@@ -113,18 +132,7 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
           Регистрация
         </h2>
 
-        {errors.general && (
-          <div style={{ 
-            color: '#7B0000', 
-            backgroundColor: '#f5f5f5', 
-            padding: '0.75rem', 
-            borderRadius: '8px', 
-            marginBottom: '1rem',
-            textAlign: 'center'
-          }}>
-            {errors.general}
-          </div>
-        )}
+        <Alert type="error" message={errors.general || ''} className="home-alert" />
 
         <form onSubmit={handleSubmit}>
           <div style={{ display: 'flex', gap: '1rem' }}>
@@ -204,7 +212,7 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
               value={formData.password}
               onChange={handleChange}
               className="form-input"
-              placeholder="Минимум 6 символов"
+              placeholder="Минимум 8 символов"
             />
             {errors.password && <div className="form-error">{errors.password}</div>}
           </div>

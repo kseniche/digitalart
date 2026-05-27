@@ -1,13 +1,21 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/ToastContext';
+import { apiFetch } from '../../api';
 import AdminDashboard from './AdminDashboard';
 import AdminUsers from './AdminUsers';
 import AdminPosts from './AdminPosts';
 import AdminComments from './AdminComments';
+import AdminCategories from './AdminCategories';
+import EmptyState from '../common/EmptyState';
+import Alert from '../common/Alert';
 import './AdminPanel.css';
 
 function AdminPanel() {
-  const { user, isAdmin, logout } = useAuth();
+  const navigate = useNavigate();
+  const { user, isAdmin, logout, isLoading: authLoading } = useAuth();
+  const toast = useToast().toast;
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -15,15 +23,17 @@ function AdminPanel() {
   const [successMessage, setSuccessMessage] = useState('');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
+  // Ранний редирект не-админов: без UI-глитча и без лишних admin-API запросов.
   useEffect(() => {
-    fetchStats();
-  }, []);
+    if (!authLoading && user && !isAdmin) {
+      navigate('/', { replace: true });
+    }
+  }, [authLoading, user, isAdmin, navigate]);
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('/api/admin/stats', {
+      const response = await apiFetch('/api/admin/stats', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
       });
@@ -33,14 +43,28 @@ function AdminPanel() {
         setStats(data);
         setError('');
       } else {
-        setError('Не удалось загрузить статистику. Попробуйте позже.');
+        const msg = 'Не удалось загрузить статистику. Попробуйте позже.';
+        setError(msg);
+        toast.error(msg);
       }
-    } catch (error) {
-      setError('Ошибка соединения с сервером');
+    } catch (err) {
+      const msg = 'Ошибка соединения с сервером';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  // Подгружаем статистику только когда пользователь точно админ.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user || !isAdmin) return;
+
+    setLoading(true);
+    fetchStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user, isAdmin]);
 
   const handleLogout = async () => {
     try {
@@ -57,10 +81,11 @@ function AdminPanel() {
     window.location.href = '/';
   };
 
-  if (loading) {
+  // Ждем пока AuthContext определит текущие роли пользователя
+  if (authLoading) {
     return (
       <div className="admin-panel">
-        <div className="loading">Загрузка...</div>
+        <EmptyState title="Загрузка админ-панели" text="Подождите, данные подготавливаются." />
       </div>
     );
   }
@@ -69,22 +94,30 @@ function AdminPanel() {
     return (
       <div className="admin-panel">
         <div className="access-denied">
-          <h2>Доступ запрещен</h2>
-          <p>У вас нет прав администратора для доступа к этой панели.</p>
-          <p>Роли пользователя: {user?.roles?.map(role => role.name || role).join(', ') || 'нет ролей'}</p>
-          <button className="btn btn-primary" onClick={() => window.location.href = '/'}>
-            На главную
-          </button>
+          <EmptyState
+            title="Доступ запрещен"
+            text={`У вас нет прав администратора для доступа к этой панели. Роли пользователя: ${user?.roles?.map(role => role.name || role).join(', ') || 'нет ролей'}`}
+            actions={<button className="btn btn-primary" onClick={() => window.location.href = '/'}>На главную</button>}
+          />
         </div>
       </div>
     );
   }
 
+  if (loading) {
+    return (
+      <div className="admin-panel">
+        <EmptyState title="Загрузка админ-панели" text="Подождите, данные подготавливаются." />
+      </div>
+    );
+  }
+
   const tabs = [
-    { id: 'dashboard', label: 'Дашборд',  },
-    { id: 'users', label: 'Пользователи',  },
-    { id: 'posts', label: 'Публикации', },
-    { id: 'comments', label: 'Комментарии', },
+    { id: 'dashboard', label: 'Дашборд' },
+    { id: 'users', label: 'Пользователи' },
+    { id: 'posts', label: 'Публикации' },
+    { id: 'comments', label: 'Комментарии' },
+    { id: 'categories', label: 'Категории | Теги' },
   ];
 
   const renderContent = () => {
@@ -97,6 +130,8 @@ function AdminPanel() {
         return <AdminPosts />;
       case 'comments':
         return <AdminComments />;
+      case 'categories':
+        return <AdminCategories />;
       default:
         return <AdminDashboard stats={stats} onRefresh={fetchStats} />;
     }
@@ -144,37 +179,7 @@ function AdminPanel() {
 
         <div className="admin-main">
           {/* Сообщения об ошибках */}
-          {error && error !== '' && (
-            <div style={{
-              backgroundColor: '#f5f5f5',
-              border: '1px solid #7B0000',
-              borderRadius: '8px',
-              padding: '1rem',
-              margin: '1rem',
-              color: '#7B0000',
-              fontSize: '0.875rem',
-              fontFamily: 'JetBrains Mono, monospace',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}>
-              {error}
-              <button
-                onClick={() => setError('')}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#7B0000',
-                  cursor: 'pointer',
-                  fontSize: '1.25rem',
-                  lineHeight: 1,
-                  padding: 0
-                }}
-              >
-                ×
-              </button>
-            </div>
-          )}
+          <Alert type="error" message={error} onClose={() => setError('')} className="admin-alert" />
           
           {renderContent()}
         </div>

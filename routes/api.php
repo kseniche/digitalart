@@ -8,6 +8,9 @@ use App\Http\Controllers\Api\CommentController;
 use App\Http\Controllers\Api\LikeController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\FollowController;
+use App\Http\Controllers\Api\FavoriteController;
+use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\RecommendationsController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AuthController;
 
@@ -16,27 +19,25 @@ use App\Http\Controllers\Api\AuthController;
 // Лента и публикации (публичные)
 Route::get('/feed', [FeedController::class, 'index']);
 Route::get('/posts', [FeedController::class, 'index']); // дублирует /feed для совместимости
-Route::get('/posts/{id}', [PostController::class, 'show']);
-Route::get('/profiles/{user}', [ProfileController::class, 'show']);
+Route::get('/tags', [FeedController::class, 'tags']);
+Route::get('/categories', [CategoryController::class, 'index']);
+Route::get('/posts/{id}', [PostController::class, 'show'])->middleware('optional_sanctum');
+Route::get('/recommendations', [RecommendationsController::class, 'index'])->middleware('optional_sanctum');
+Route::get('/profiles/{user}', [ProfileController::class, 'show'])->middleware('optional_sanctum');
 Route::get('/profiles/{user}/posts', [ProfileController::class, 'posts']);
 
 //  Аутентификация
-Route::post('/login', [AuthController::class, 'login']);
-Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:auth-login');
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:auth-register');
+Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:auth-password');
+Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:auth-password');
 
 //  ЗАЩИЩЕННЫЕ МАРШРУТЫ (требуют аутентификации)
 Route::middleware('auth:sanctum')->group(function () {
     // Пользователь
     Route::get('/user', function (Request $request) {
-        // Правильно загружаем роли с именем
         $user = $request->user()->load('roles:name');
-        
-        \Log::info('=== API USER ROLES DEBUG ===');
-        \Log::info('User ID: ' . $user->id);
-        \Log::info('Roles loaded: ' . json_encode($user->roles));
-        \Log::info('Role names: ' . $user->getRoleNames());
-        \Log::info('Has admin: ' . ($user->hasRole('admin') ? 'YES' : 'NO'));
-        
+
         return response()->json([
             'user' => $user,
             'avatar_url' => $user->avatar_url
@@ -44,29 +45,39 @@ Route::middleware('auth:sanctum')->group(function () {
     });
     
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/user/update-password', [AuthController::class, 'updatePassword'])->middleware('not_banned');
 
-    // Публикации
-    Route::post('/posts', [PostController::class, 'store']);
-    Route::put('/posts/{post}', [PostController::class, 'update']); // Редактирование публикации
-    Route::delete('/posts/{post}', [PostController::class, 'destroy']);
+    // Публикации (создание — только для незаблокированных, критерий 3.6)
+    Route::post('/posts', [PostController::class, 'store'])->middleware(['not_banned', 'throttle:content-create']);
+    Route::put('/posts/{post}', [PostController::class, 'update'])->middleware('not_banned'); // Редактирование публикации
+    Route::delete('/posts/{post}', [PostController::class, 'destroy'])->middleware('not_banned');
 
-    // Лайки и комментарии
-    Route::post('/posts/{post}/comments', [CommentController::class, 'store']);
-    Route::delete('/comments/{comment}', [CommentController::class, 'destroy']); // Удаление комментариев
-    Route::post('/posts/{post}/like', [LikeController::class, 'toggle']);
+    // Лайки и комментарии (только для незаблокированных)
+    Route::post('/posts/{post}/comments', [CommentController::class, 'store'])->middleware(['not_banned', 'throttle:content-create']);
+    Route::delete('/comments/{comment}', [CommentController::class, 'destroy'])->middleware('not_banned'); // Удаление комментариев
+    Route::post('/posts/{post}/like', [LikeController::class, 'toggle'])->middleware(['not_banned', 'throttle:social-actions']);
+    Route::post('/comments/{id}/like', [CommentController::class, 'toggleLike'])->middleware(['not_banned', 'throttle:social-actions']);
+
+    // Избранное (критерий 3.8)
+    Route::post('/posts/{id}/favorite', [FavoriteController::class, 'toggleFavorite'])->middleware(['not_banned', 'throttle:social-actions']);
+    Route::get('/profile/favorites', [FavoriteController::class, 'getMyFavorites']);
+    Route::get('/profile/drafts', [ProfileController::class, 'drafts']);
+    Route::get('/profile/moderation-posts', [ProfileController::class, 'moderationPosts']);
 
     // Профиль
     Route::get('/profile', [ProfileController::class, 'showCurrent']); // Текущий профиль
-    Route::put('/profile', [ProfileController::class, 'update']);
-    Route::post('/profile/avatar', [ProfileController::class, 'updateAvatar']); // Обновление аватара
-    Route::delete('/profile', [ProfileController::class, 'destroy']); // Удаление профиля
+    Route::put('/profile', [ProfileController::class, 'update'])->middleware('not_banned');
+    Route::post('/profile/avatar', [ProfileController::class, 'updateAvatar'])->middleware('not_banned'); // Обновление аватара
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->middleware('not_banned'); // Удаление профиля
 
     // Подписки
-    Route::post('/users/{user}/follow', [FollowController::class, 'toggle']);
-    Route::get('/users/{user}/follow-status', [FollowController::class, 'check']); // Проверка статуса подписки
+    Route::post('/users/{user}/follow', [FollowController::class, 'toggle'])->middleware(['not_banned', 'throttle:social-actions']);
+    Route::get('/users/{user}/follow-status', [FollowController::class, 'check']);
+    Route::get('/users/{user}/followers', [FollowController::class, 'followers']);
+    Route::get('/users/{user}/following', [FollowController::class, 'following']);
     
     //  АДМИН ПАНЕЛЬ
-    Route::prefix('admin')->middleware('admin')->group(function () {
+    Route::prefix('admin')->middleware(['admin', 'throttle:admin-actions'])->group(function () {
         // Статистика
         Route::get('/stats', [AdminController::class, 'getStats']);
         
@@ -78,29 +89,56 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/users/{user}', [AdminController::class, 'getUser']);
         Route::delete('/users/{user}', [AdminController::class, 'deleteUser']);
         Route::post('/users/{id}/restore', [AdminController::class, 'restoreUser']);
+        Route::post('/users/{id}/ban', [AdminController::class, 'banUser']);
+        Route::post('/users/{id}/unban', [AdminController::class, 'unbanUser']);
         
         // Управление публикациями
         Route::get('/posts', [AdminController::class, 'getPosts']);
+        Route::get('/posts/{id}', [AdminController::class, 'getPost']);
+        Route::post('/posts/{id}/approve', [AdminController::class, 'approvePost']);
+        Route::post('/posts/{id}/reject', [AdminController::class, 'rejectPost']);
         Route::delete('/posts/{post}', [AdminController::class, 'deletePost']);
         Route::post('/posts/{id}/restore', [AdminController::class, 'restorePost']);
         
         // Управление комментариями
         Route::get('/comments', [AdminController::class, 'getComments']);
+        Route::post('/comments/{id}/approve', [AdminController::class, 'approveComment']);
         Route::delete('/comments/{comment}', [AdminController::class, 'deleteComment']);
         Route::post('/comments/{id}/restore', [AdminController::class, 'restoreComment']);
+
+        // Управление словарем автомодерации
+        Route::get('/banned-words', [AdminController::class, 'getBannedWords']);
+        Route::post('/banned-words', [AdminController::class, 'addBannedWord']);
+        Route::delete('/banned-words/{id}', [AdminController::class, 'deleteBannedWord']);
+
+        // Управление категориями (критерий 3.2.2)
+        Route::get('/categories', [CategoryController::class, 'index']);
+        Route::post('/categories', [CategoryController::class, 'store']);
+        Route::put('/categories/{category}', [CategoryController::class, 'update']);
+        Route::delete('/categories/{category}', [CategoryController::class, 'destroy']);
+
+        // Теги публикаций (просмотр и удаление связи с постами)
+        Route::get('/tags', [AdminController::class, 'getTags']);
+        Route::delete('/tags', [AdminController::class, 'deleteTag']);
     });
 });
 
 // Обработка несуществующих API маршрутов (404)
 Route::fallback(function () {
+    if (app()->environment(['local', 'testing']) || config('app.debug')) {
+        return response()->json([
+            'message' => 'API endpoint not found. Check your route definition.',
+            'available_endpoints' => [
+                'GET /api/feed',
+                'GET /api/posts/{id}',
+                'POST /api/login',
+                'POST /api/register',
+                'GET /api/profiles/{id}',
+            ]
+        ], 404);
+    }
+
     return response()->json([
-        'message' => 'API endpoint not found. Check your route definition.',
-        'available_endpoints' => [
-            'GET /api/feed',
-            'GET /api/posts/{id}',
-            'POST /api/login',
-            'POST /api/register',
-            'GET /api/profiles/{id}',
-        ]
+        'message' => 'Not Found',
     ], 404);
 });

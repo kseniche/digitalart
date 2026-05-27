@@ -2,7 +2,9 @@ import React from 'react';
 
 function UserCard({ user, onAction }) {
   const isDeleted = user.deleted_at !== null;
+  const isBanned = !!user.is_banned;
   const userRoles = user.roles?.map(role => role.name) || [];
+  const isAdminUser = userRoles.includes('admin');
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('ru-RU', {
@@ -24,6 +26,7 @@ function UserCard({ user, onAction }) {
             className="avatar"
           />
           {isDeleted && <div className="deleted-badge">Удален</div>}
+          {!isDeleted && isBanned && <div className="deleted-badge deleted-badge--banned">Бан</div>}
         </div>
         <div className="user-card__info">
           <h3 className="user-card__name">
@@ -38,6 +41,14 @@ function UserCard({ user, onAction }) {
 
       <div className="user-card__details">
         <div className="user-card__meta">
+          {!isDeleted && isBanned && user.ban_reason && (
+            <div className="meta-item">
+              <span className="meta-label">Причина бана:</span>
+              <span className="meta-value" title={user.ban_reason}>
+                {user.ban_reason.length > 80 ? `${user.ban_reason.slice(0, 80)}…` : user.ban_reason}
+              </span>
+            </div>
+          )}
           <div className="meta-item">
             <span className="meta-label">Роли:</span>
             <span className="meta-value">
@@ -77,31 +88,49 @@ function UserCard({ user, onAction }) {
         </div>
       </div>
 
-      <div className="user-card__actions">
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={() => onAction('view', user.id)}
-        >
-          Просмотреть
-        </button>
-        
-        {isDeleted ? (
+      {!isAdminUser && (
+        <div className="user-card__actions">
           <button
-            className="btn btn-success btn-sm"
-            onClick={() => onAction('restore', user.id)}
+            className="btn btn-primary btn-sm"
+            onClick={() => onAction('view', user.id)}
           >
-            Восстановить
+            Просмотреть
           </button>
-        ) : (
-          <button
-            className="btn btn-danger btn-sm"
-            onClick={() => onAction('delete', user.id)}
-            disabled={userRoles.includes('admin')}
-          >
-            Удалить
-          </button>
-        )}
-      </div>
+          
+          {isDeleted ? (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => onAction('restore', user.id)}
+            >
+              Восстановить
+            </button>
+          ) : (
+            <>
+              {isBanned ? (
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => onAction('unban', user.id)}
+                >
+                  Разблокировать
+                </button>
+              ) : (
+                <button
+                  className="btn btn-outline btn-sm"
+                  onClick={() => onAction('ban', user.id)}
+                >
+                  Заблокировать
+                </button>
+              )}
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={() => onAction('delete', user.id)}
+              >
+                Удалить
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

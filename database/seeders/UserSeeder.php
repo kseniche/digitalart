@@ -9,6 +9,11 @@ use Spatie\Permission\Models\Role;
 
 class UserSeeder extends Seeder
 {
+    /**
+     * После migrate:fresh --seed:
+     * - Администратор: admin@digital-art.ru / password123 (тот же пароль, что у тестовых user-ов).
+     * - Тестовый пользователь: test@example.com / password123
+     */
     public function run()
     {
         // Создаем роли, если их нет

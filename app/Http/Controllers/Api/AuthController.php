@@ -3,11 +3,16 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\UpdatePasswordRequest;
 use App\Models\User;
+use App\Rules\PersonNameLetters;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+use Spatie\Permission\Models\Role;
 
 class AuthController extends Controller
 {
@@ -15,12 +20,11 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
-            'password' => 'required|string|min:6',
+            'password' => 'required|string',
         ], [
             'email.required' => 'Email обязателен',
             'email.email' => 'Некорректный формат email',
             'password.required' => 'Пароль обязателен',
-            'password.min' => 'Пароль должен содержать минимум 6 символов',
         ]);
 
         if ($validator->fails()) {
@@ -30,10 +34,15 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $credentials = $request->only('email', 'password');
+        $email = Str::lower(trim((string) $request->input('email')));
+        $credentials = [
+            'email' => $email,
+            'password' => $request->input('password'),
+        ];
 
         if (Auth::attempt($credentials)) {
             $user = Auth::user();
+            // Срок действия PAT задаётся в config/sanctum.php (expiration, по умолчанию 7 суток).
             $token = $user->createToken('auth-token')->plainTextToken;
 
             return response()->json([
@@ -57,13 +66,19 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'firstName' => 'required|string|max:255',
-            'lastName' => 'required|string|max:255',
+        $normalized = $request->all();
+        $normalized['email'] = Str::lower(trim((string) $request->input('email')));
+        $normalized['firstName'] = trim((string) $request->input('firstName', ''));
+        $normalized['lastName'] = trim((string) $request->input('lastName', ''));
+        $request->merge(['email' => $normalized['email']]);
+
+        $validator = Validator::make($normalized, [
+            'firstName' => ['required', 'string', 'max:255', new PersonNameLetters],
+            'lastName' => ['required', 'string', 'max:255', new PersonNameLetters],
             'username' => 'required|string|max:255|unique:users,username',
             'email' => 'required|string|email|max:255|unique:users,email',
-            'password' => 'required|string|min:6',
-            'passwordConfirmation' => 'required|string|min:6|same:password',
+            'password' => 'required|string|min:8',
+            'passwordConfirmation' => 'required|string|min:8|same:password',
         ], [
             'firstName.required' => 'Имя обязательно',
             'lastName.required' => 'Фамилия обязательна',
@@ -73,9 +88,9 @@ class AuthController extends Controller
             'email.email' => 'Некорректный формат email',
             'email.unique' => 'Пользователь с таким email уже существует',
             'password.required' => 'Пароль обязателен',
-            'password.min' => 'Пароль должен содержать минимум 6 символов',
+            'password.min' => 'Пароль должен содержать минимум 8 символов',
             'passwordConfirmation.required' => 'Подтверждение пароля обязательно',
-            'passwordConfirmation.min' => 'Подтверждение пароля должно содержать минимум 6 символов',
+            'passwordConfirmation.min' => 'Подтверждение пароля должно содержать минимум 8 символов',
             'passwordConfirmation.same' => 'Пароли не совпадают',
         ]);
 
@@ -87,13 +102,16 @@ class AuthController extends Controller
         }
 
         $user = User::create([
-            'name' => $request->firstName,
-            'user_surname' => $request->lastName,
+            'name' => $normalized['firstName'],
+            'user_surname' => $normalized['lastName'],
             'username' => $request->username,
-            'email' => $request->email,
+            'email' => $normalized['email'],
             'password' => Hash::make($request->password),
         ]);
+        Role::firstOrCreate(['name' => 'user']);
+        $user->assignRole('user');
 
+        // Срок действия PAT задаётся в config/sanctum.php (expiration, по умолчанию 7 суток).
         $token = $user->createToken('auth-token')->plainTextToken;
 
         return response()->json([
@@ -110,12 +128,126 @@ class AuthController extends Controller
         ], 201);
     }
 
+    /**
+     * Запрос на восстановление пароля (forgot password).
+     * Возвращает одинаковый ответ для существующего и несуществующего email.
+     */
+    public function forgotPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+        ], [
+            'email.required' => 'Email обязателен',
+            'email.email' => 'Некорректный формат email',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $email = Str::lower(trim((string) $request->input('email')));
+        Password::sendResetLink(['email' => $email]);
+
+        return response()->json([
+            'message' => 'Если аккаунт с таким email существует, инструкция по сбросу отправлена.',
+        ]);
+    }
+
+    /**
+     * Сброс пароля по токену (reset password).
+     */
+    public function resetPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'token' => 'required|string',
+            'email' => 'required|email',
+            'password' => 'required|string|min:8|confirmed',
+        ], [
+            'token.required' => 'Токен обязателен',
+            'email.required' => 'Email обязателен',
+            'email.email' => 'Некорректный формат email',
+            'password.required' => 'Новый пароль обязателен',
+            'password.min' => 'Новый пароль должен содержать минимум 8 символов',
+            'password.confirmed' => 'Подтверждение нового пароля не совпадает',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $email = Str::lower(trim((string) $request->input('email')));
+        $status = Password::reset(
+            [
+                'email' => $email,
+                'password' => (string) $request->input('password'),
+                'password_confirmation' => (string) $request->input('password_confirmation'),
+                'token' => (string) $request->input('token'),
+            ],
+            function (User $user, string $password) {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                ])->save();
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            return response()->json([
+                'message' => 'Не удалось сбросить пароль. Проверьте токен и email.',
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => 'Пароль успешно сброшен',
+        ]);
+    }
+
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        $token = $request->user()?->currentAccessToken();
+        if ($token) {
+            $token->delete();
+        }
+
+        Auth::guard('web')->logout();
+        if ($request->hasSession()) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
 
         return response()->json([
             'message' => 'Успешный выход'
+        ]);
+    }
+
+    /**
+     * Смена пароля для авторизованного пользователя.
+     * Текущий токен Sanctum не аннулируется — пользователь остаётся в приложении.
+     */
+    public function updatePassword(UpdatePasswordRequest $request)
+    {
+        $user = $request->user();
+
+        if (!Hash::check($request->input('current_password'), $user->password)) {
+            return response()->json([
+                'message' => 'Текущий пароль указан неверно.',
+                'errors' => [
+                    'current_password' => ['Неверный текущий пароль.'],
+                ],
+            ], 422);
+        }
+
+        $user->update([
+            'password' => $request->input('password'),
+        ]);
+
+        return response()->json([
+            'message' => 'Пароль успешно изменен',
         ]);
     }
 }

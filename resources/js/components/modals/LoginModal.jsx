@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import Alert from '../common/Alert';
 
 function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
   const { login } = useAuth();
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -36,8 +39,6 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
 
     if (!formData.password) {
       newErrors.password = 'Пароль обязателен';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Пароль должен содержать минимум 6 символов';
     }
 
     setErrors(newErrors);
@@ -59,7 +60,11 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
       if (result.success) {
         onLogin();
       } else {
-        setErrors({ general: result.error || 'Ошибка при входе. Проверьте данные.' });
+        const nextErrors = { general: result.error || 'Ошибка при входе. Проверьте данные.' };
+        if (result.errors && typeof result.errors === 'object') {
+          Object.assign(nextErrors, result.errors);
+        }
+        setErrors(nextErrors);
       }
     } catch (error) {
       setErrors({ general: 'Ошибка при входе. Проверьте данные.' });
@@ -79,18 +84,7 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
           Вход в аккаунт
         </h2>
 
-        {errors.general && (
-          <div style={{ 
-            color: '#7B0000', 
-            backgroundColor: '#f5f5f5', 
-            padding: '0.75rem', 
-            borderRadius: '8px', 
-            marginBottom: '1rem',
-            textAlign: 'center'
-          }}>
-            {errors.general}
-          </div>
-        )}
+        <Alert type="error" message={errors.general || ''} className="home-alert" />
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -134,6 +128,26 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
             {isLoading ? 'Вход...' : 'Войти'}
           </button>
         </form>
+
+        <div style={{ textAlign: 'center', marginBottom: '0.75rem' }}>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              navigate('/forgot-password');
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#7B0000',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              fontFamily: 'JetBrains Mono, monospace'
+            }}
+          >
+            Забыли пароль?
+          </button>
+        </div>
 
         <div style={{ textAlign: 'center' }}>
           <span style={{ color: '#6b7280', fontFamily: 'JetBrains Mono, monospace' }}>Нет аккаунта? </span>

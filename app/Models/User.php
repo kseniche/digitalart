@@ -20,11 +20,13 @@ class User extends Authenticatable
         'username',
         'user_surname',
         'phone',
-        'user_role',
         'avatar',
         'country',
         'website',
         'bio',
+        'is_banned',
+        'ban_reason',
+        'email_notifications_enabled',
     ];
 
     protected $hidden = [
@@ -45,6 +47,8 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_banned' => 'boolean',
+            'email_notifications_enabled' => 'boolean',
         ];
     }
 
@@ -112,6 +116,12 @@ class User extends Authenticatable
         return $this->hasMany(Follower::class, 'follower_id');
     }
 
+    /** Избранные посты (критерий 3.8). */
+    public function favorites()
+    {
+        return $this->belongsToMany(Post::class, 'favorites')->withTimestamps();
+    }
+
     // Accessors для вычисляемых полей
     public function getFollowersCountAttribute()
     {
@@ -146,6 +156,10 @@ class User extends Authenticatable
     public function getAvatarUrlAttribute(): ?string
     {
         if (empty($this->avatar)) {
+            return null;
+        }
+        // Локальный fallback не отдавать как S3 URL (избегаем 404 на default-avatar.svg в бакете)
+        if ($this->avatar === 'default-avatar.svg' || str_ends_with($this->avatar, '/default-avatar.svg')) {
             return null;
         }
         

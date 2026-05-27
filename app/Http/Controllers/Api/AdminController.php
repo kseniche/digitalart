@@ -3,15 +3,40 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Support\AdminReportCsvBuilder;
+use App\Models\BannedWord;
 use App\Models\User;
 use App\Models\Post;
 use App\Models\Comment;
+use Illuminate\Database\QueryException;
+use App\Notifications\CommentRemovedByAdminNotification;
+use App\Notifications\PostApprovedNotification;
+use App\Notifications\PostRemovedByAdminNotification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class AdminController extends Controller
 {
+    /**
+     * Ограничиваем per_page для админки, чтобы избежать перегруза БД/памяти.
+     */
+    private function clampPerPage(Request $request, int $default = 20, int $min = 1, int $max = 100): int
+    {
+        $value = (int) $request->get('per_page', $default);
+
+        if ($value < $min) {
+            return $min;
+        }
+
+        if ($value > $max) {
+            return $max;
+        }
+
+        return $value;
+    }
+
     // Получить статистику для дашборда
     public function getStats(): JsonResponse
     {
@@ -35,6 +60,193 @@ class AdminController extends Controller
         }
     }
 
+    // Словарь запрещенных слов (автомодерация)
+    public function getBannedWords(Request $request): JsonResponse
+    {
+        try {
+            $query = BannedWord::query()->orderBy('word');
+
+            if ($request->filled('search')) {
+                $search = (string) $request->input('search');
+                $query->where('word', 'like', "%{$search}%");
+            }
+
+            $perPage = $this->clampPerPage($request, 50, 1, 200);
+            $words = $query->paginate($perPage);
+
+            return response()->json([
+                'data' => $words->items(),
+                'current_page' => $words->currentPage(),
+                'last_page' => $words->lastPage(),
+                'per_page' => $words->perPage(),
+                'total' => $words->total(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Admin getBannedWords error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при загрузке словаря'], 500);
+        }
+    }
+
+    public function addBannedWord(Request $request): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'word' => ['required', 'string', 'max:255'],
+            ]);
+
+            $word = mb_strtolower(trim((string) $data['word']));
+            if ($word === '') {
+                return response()->json(['message' => 'Слово не может быть пустым'], 422);
+            }
+
+            $exists = BannedWord::query()->whereRaw('LOWER(word) = ?', [$word])->exists();
+            if ($exists) {
+                return response()->json(['message' => 'Это слово уже есть в словаре'], 409);
+            }
+
+            $created = BannedWord::query()->create([
+                'word' => $word,
+                'created_by' => optional($request->user())->id,
+            ]);
+
+            return response()->json([
+                'message' => 'Слово добавлено в словарь',
+                'word' => $created,
+            ], 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            Log::error('Admin addBannedWord error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при добавлении слова'], 500);
+        }
+    }
+
+    public function deleteBannedWord($id): JsonResponse
+    {
+        try {
+            $word = BannedWord::query()->findOrFail($id);
+            $word->delete();
+
+            return response()->json(['message' => 'Слово удалено из словаря']);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'Слово не найдено'], 404);
+        } catch (\Throwable $e) {
+            Log::error('Admin deleteBannedWord error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при удалении слова'], 500);
+        }
+    }
+
+    /**
+     * Список тегов из публикаций (агрегация, без отдельной таблицы).
+     * GET /api/admin/tags
+     */
+    public function getTags(): JsonResponse
+    {
+        try {
+            $counts = [];
+            $rows = Post::withTrashed()
+                ->whereNotNull('tags')
+                ->where('tags', '!=', '')
+                ->pluck('tags');
+
+            foreach ($rows as $value) {
+                foreach ($this->normalizePostTags($value) as $tag) {
+                    $counts[$tag] = ($counts[$tag] ?? 0) + 1;
+                }
+            }
+
+            $tags = [];
+            foreach ($counts as $name => $postsCount) {
+                $tags[] = [
+                    'name' => $name,
+                    'posts_count' => $postsCount,
+                ];
+            }
+
+            usort($tags, fn ($a, $b) => strcasecmp($a['name'], $b['name']));
+
+            return response()->json($tags);
+        } catch (\Throwable $e) {
+            Log::error('Admin getTags error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при загрузке тегов'], 500);
+        }
+    }
+
+    /**
+     * Удалить тег из всех публикаций (публикации и пользователи не удаляются).
+     * DELETE /api/admin/tags
+     */
+    public function deleteTag(Request $request): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'tag' => 'required|string|min:1|max:255',
+            ]);
+            $tag = trim($data['tag']);
+            if ($tag === '') {
+                return response()->json(['message' => 'Укажите название тега'], 422);
+            }
+
+            $updated = 0;
+            Post::withTrashed()
+                ->whereNotNull('tags')
+                ->where('tags', '!=', '')
+                ->orderBy('id')
+                ->chunkById(100, function ($posts) use ($tag, &$updated) {
+                    foreach ($posts as $post) {
+                        $tags = $this->normalizePostTags($post->tags);
+                        if (!in_array($tag, $tags, true)) {
+                            continue;
+                        }
+                        $newTags = array_values(array_filter(
+                            $tags,
+                            fn (string $t) => $t !== $tag
+                        ));
+                        $post->tags = $newTags;
+                        $post->save();
+                        $updated++;
+                    }
+                });
+
+            return response()->json([
+                'message' => $updated > 0
+                    ? "Тег «{$tag}» удалён из {$updated} публикаций"
+                    : "Тег «{$tag}» не найден в публикациях",
+                'updated_posts' => $updated,
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            Log::error('Admin deleteTag error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при удалении тега'], 500);
+        }
+    }
+
+    /**
+     * @param  mixed  $value
+     * @return list<string>
+     */
+    private function normalizePostTags($value): array
+    {
+        if (is_array($value)) {
+            $tags = $value;
+        } elseif (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                $tags = $decoded;
+            } else {
+                $tags = array_map('trim', explode(',', $value));
+            }
+        } else {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map(static fn ($t) => trim((string) $t), $tags),
+            static fn (string $t) => $t !== ''
+        )));
+    }
+
     // Получить всех пользователей (включая удаленных)
     public function getUsers(Request $request): JsonResponse
     {
@@ -52,6 +264,17 @@ class AdminController extends Controller
                         break;
                 }
             }
+
+            if ($request->filled('auto_moderation')) {
+                switch ($request->input('auto_moderation')) {
+                    case 'passed':
+                        $query->where('comments.auto_moderation_passed', true);
+                        break;
+                    case 'failed':
+                        $query->where('comments.auto_moderation_passed', false);
+                        break;
+                }
+            }
             
             // Поиск по имени или email
             if ($request->has('search')) {
@@ -63,7 +286,7 @@ class AdminController extends Controller
                 });
             }
             
-            $perPage = $request->get('per_page', 20);
+            $perPage = $this->clampPerPage($request);
             $users = $query->orderBy('created_at', 'desc')->paginate($perPage);
             
             return response()->json([
@@ -93,7 +316,7 @@ class AdminController extends Controller
                 'comments' => function($query) {
                     $query->withTrashed()
                           ->with(['post' => function($q) {
-                              $q->select('id', 'post_title', 'image_url');
+                              $q->select('id', 'post_title', 'media_path', 'media_type');
                           }])
                           ->orderBy('created_at', 'desc')
                           ->limit(10);
@@ -130,12 +353,110 @@ class AdminController extends Controller
     {
         try {
             $user = User::withTrashed()->findOrFail($id);
+
+            // Уникальность email/username не учитывает soft-deleted записи,
+            // поэтому при конфликте восстановление может упасть с SQL error.
+            $conflictEmail = $user->email
+                ? User::where('email', $user->email)
+                    ->whereNull('deleted_at')
+                    ->where('id', '!=', $user->id)
+                    ->exists()
+                : false;
+
+            $conflictUsername = $user->username
+                ? User::where('username', $user->username)
+                    ->whereNull('deleted_at')
+                    ->where('id', '!=', $user->id)
+                    ->exists()
+                : false;
+
+            if ($conflictEmail || $conflictUsername) {
+                if ($conflictEmail && $conflictUsername) {
+                    return response()->json([
+                        'message' => 'Невозможно восстановить пользователя: email и username заняты активным пользователем'
+                    ], 409);
+                }
+
+                if ($conflictEmail) {
+                    return response()->json([
+                        'message' => 'Невозможно восстановить пользователя: email занят активным пользователем'
+                    ], 409);
+                }
+
+                return response()->json([
+                    'message' => 'Невозможно восстановить пользователя: username занят активным пользователем'
+                ], 409);
+            }
+
             $user->restore();
-            
+
             return response()->json(['message' => 'Пользователь успешно восстановлен']);
+        } catch (QueryException $e) {
+            Log::error('Admin restoreUser QueryException: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка восстановления пользователя (возможна коллизия email/username)'], 409);
         } catch (\Exception $e) {
             Log::error('Admin restoreUser error: ' . $e->getMessage());
             return response()->json(['message' => 'Ошибка при восстановлении пользователя'], 500);
+        }
+    }
+
+    /** Заблокировать пользователя (критерий 3.6). Меняет только is_banned, soft delete не трогает. */
+    public function banUser(Request $request, $id): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'ban_reason' => 'required|string|min:3|max:1000',
+            ]);
+
+            if (!Schema::hasColumn('users', 'ban_reason')) {
+                return response()->json([
+                    'message' => 'Колонка ban_reason отсутствует. Выполните: php artisan migrate',
+                ], 503);
+            }
+
+            $user = User::withTrashed()->findOrFail($id);
+            if ($user->hasRole('admin')) {
+                return response()->json(['message' => 'Нельзя заблокировать администратора'], 403);
+            }
+            $user->update([
+                'is_banned' => true,
+                'ban_reason' => $data['ban_reason'],
+            ]);
+            $user->load('roles');
+
+            try {
+                $user->notify(new \App\Notifications\UserBannedNotification());
+            } catch (\Throwable $notifyError) {
+                Log::warning('banUser: уведомление не отправлено', [
+                    'user_id' => $user->id,
+                    'error' => $notifyError->getMessage(),
+                ]);
+            }
+
+            return response()->json(['message' => 'Пользователь заблокирован', 'user' => $user]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Admin banUser error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при блокировке пользователя'], 500);
+        }
+    }
+
+    /** Разблокировать пользователя (критерий 3.6). */
+    public function unbanUser($id): JsonResponse
+    {
+        try {
+            $user = User::withTrashed()->findOrFail($id);
+            $user->update([
+                'is_banned' => false,
+                'ban_reason' => null,
+            ]);
+            $user->load('roles');
+            $user->notify(new \App\Notifications\UserUnbannedNotification());
+            return response()->json(['message' => 'Пользователь разблокирован', 'user' => $user]);
+        } catch (\Exception $e) {
+            Log::error('Admin unbanUser error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при разблокировке пользователя'], 500);
         }
     }
     
@@ -143,20 +464,27 @@ class AdminController extends Controller
     public function getPosts(Request $request): JsonResponse
     {
         try {
-            $query = Post::with(['author' => function($q) {
-                $q->withTrashed();
-            }])->withTrashed();
-            
-            // Исключаем посты удаленных пользователей
-            $query->whereHas('author', function($q) {
-                $q->whereNull('users.deleted_at');
-            });
+            $query = Post::with([
+                'author' => function($q) {
+                    $q->withTrashed();
+                },
+                'category:id,name',
+            ])->withTrashed();
             
             // Фильтрация по статусу
             if ($request->has('status')) {
                 switch ($request->status) {
-                    case 'active':
-                        $query->whereNull('posts.deleted_at');
+                    case 'pending':
+                        $query->where('posts.moderation_status', 'pending')
+                              ->whereNull('posts.deleted_at');
+                        break;
+                    case 'approved':
+                        $query->where('posts.moderation_status', 'approved')
+                              ->whereNull('posts.deleted_at');
+                        break;
+                    case 'rejected':
+                        $query->where('posts.moderation_status', 'rejected')
+                              ->whereNull('posts.deleted_at');
                         break;
                     case 'deleted':
                         $query->whereNotNull('posts.deleted_at');
@@ -172,9 +500,18 @@ class AdminController extends Controller
                       ->orWhere('post_content', 'like', "%{$search}%");
                 });
             }
+
+            // Фильтрация по автору (для страницы публикаций конкретного пользователя)
+            if ($request->filled('user_id')) {
+                $query->where('user_id', (int) $request->user_id);
+            }
             
-            $perPage = $request->get('per_page', 20);
+            $perPage = $this->clampPerPage($request);
             $posts = $query->orderBy('created_at', 'desc')->paginate($perPage);
+            $posts->getCollection()->transform(function ($post) {
+                $post->setAttribute('author_deleted', (bool) optional($post->author)->deleted_at);
+                return $post;
+            });
             
             return response()->json([
                 'data' => $posts->items(),
@@ -188,17 +525,129 @@ class AdminController extends Controller
             return response()->json(['message' => 'Ошибка при загрузке публикаций'], 500);
         }
     }
-     //Удалить публикацию (soft delete)
-     
-    public function deletePost(Post $post): JsonResponse
+
+    // Детали публикации для администратора (включая удаленные комментарии)
+    public function getPost($id): JsonResponse
     {
         try {
+            $post = Post::withTrashed()
+                ->with([
+                    'author' => function ($q) {
+                        $q->withTrashed();
+                    },
+                    'category:id,name',
+                ])
+                ->withCount(['likes', 'comments'])
+                ->findOrFail($id);
+
+            $comments = Comment::withTrashed()
+                ->where('post_id', $post->id)
+                ->with([
+                    'author' => function ($q) {
+                        $q->withTrashed();
+                    },
+                    'post' => function ($q) {
+                        $q->withTrashed();
+                    },
+                ])
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'post' => $post,
+                'comments' => $comments,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Admin getPost error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при загрузке публикации'], 500);
+        }
+    }
+    // Отклонить публикацию (можно исправить и отправить повторно)
+    public function rejectPost(Request $request, $id): JsonResponse
+    {
+        try {
+            $post = Post::withTrashed()->with('author')->findOrFail($id);
+            if ($post->deleted_at) {
+                return response()->json(['message' => 'Нельзя отклонить удаленную публикацию'], 422);
+            }
+            $data = $request->validate([
+                'reason' => 'nullable|string|max:1000',
+            ]);
+            $reason = trim((string) ($data['reason'] ?? ''));
+
+            $post->update([
+                'moderation_status' => 'rejected',
+                'approved_at' => null,
+                'moderation_rejection_reason' => $reason !== '' ? $reason : null,
+            ]);
+
+            if ($post->author) {
+                $post->author->notify(new PostRemovedByAdminNotification($post, 'rejected', $reason !== '' ? $reason : null));
+            }
+            Log::info('Post rejected by admin', ['post_id' => $post->id, 'reason' => $reason]);
+
+            return response()->json([
+                'message' => 'Публикация отклонена. Пользователь может исправить её и отправить повторно.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Admin rejectPost error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при отклонении публикации'], 500);
+        }
+    }
+
+    // Удалить публикацию за нарушение правил (soft delete без возможности исправить пользователем)
+    public function deletePost(Request $request, Post $post): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'reason' => 'nullable|string|max:1000',
+            ]);
+            $reason = trim((string) ($data['reason'] ?? ''));
+            $post->loadMissing('author');
+            $author = $post->author;
+
+            $post->update([
+                'moderation_status' => 'rejected',
+                'approved_at' => null,
+                'moderation_rejection_reason' => $reason !== '' ? $reason : null,
+            ]);
             $post->delete();
+
+            if ($author) {
+                $author->notify(new PostRemovedByAdminNotification($post, 'deleted', $reason !== '' ? $reason : null));
+            }
+            Log::info('Post deleted by admin for violation', ['post_id' => $post->id, 'reason' => $reason]);
             
-            return response()->json(['message' => 'Публикация успешно удалена']);
+            return response()->json(['message' => 'Пост удален из за нарушения правил сообщества']);
         } catch (\Exception $e) {
             Log::error('Admin deletePost error: ' . $e->getMessage());
             return response()->json(['message' => 'Ошибка при удалении публикации'], 500);
+        }
+    }
+    // Одобрить публикацию (показывать в ленте)
+    public function approvePost($id): JsonResponse
+    {
+        try {
+            $post = Post::withTrashed()->with('author')->findOrFail($id);
+
+            if ($post->deleted_at) {
+                return response()->json(['message' => 'Нельзя одобрить удаленную публикацию'], 422);
+            }
+
+            $post->update([
+                'moderation_status' => 'approved',
+                'approved_at' => now(),
+                'moderation_rejection_reason' => null,
+            ]);
+
+            if ($post->author) {
+                $post->author->notify(new PostApprovedNotification($post));
+            }
+
+            return response()->json(['message' => 'Публикация одобрена']);
+        } catch (\Exception $e) {
+            Log::error('Admin approvePost error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при одобрении публикации'], 500);
         }
     }
      // Восстановить публикацию
@@ -228,16 +677,16 @@ class AdminController extends Controller
                 }
             ])->withTrashed();
             
-            // Исключаем комментарии удаленных пользователей
-            $query->whereHas('author', function($q) {
-                $q->whereNull('users.deleted_at');
-            });
-            
-            // Фильтрация по статусу
+            // Фильтрация по статусу модерации
             if ($request->has('status')) {
                 switch ($request->status) {
-                    case 'active':
-                        $query->whereNull('comments.deleted_at');
+                    case 'pending':
+                        $query->where('comments.moderation_status', 'pending')
+                              ->whereNull('comments.deleted_at');
+                        break;
+                    case 'approved':
+                        $query->where('comments.moderation_status', 'approved')
+                              ->whereNull('comments.deleted_at');
                         break;
                     case 'deleted':
                         $query->whereNotNull('comments.deleted_at');
@@ -251,8 +700,12 @@ class AdminController extends Controller
                 $query->where('comment_content', 'like', "%{$search}%");
             }
             
-            $perPage = $request->get('per_page', 20);
+            $perPage = $this->clampPerPage($request);
             $comments = $query->orderBy('created_at', 'desc')->paginate($perPage);
+            $comments->getCollection()->transform(function ($comment) {
+                $comment->setAttribute('author_deleted', (bool) optional($comment->author)->deleted_at);
+                return $comment;
+            });
             
             return response()->json([
                 'data' => $comments->items(),
@@ -272,12 +725,78 @@ class AdminController extends Controller
     public function deleteComment(Comment $comment): JsonResponse
     {
         try {
+            $comment->loadMissing('author');
+            $author = $comment->author;
+            $post = $comment->post;
+
+            if ($comment->moderation_status === 'approved' && $post && $post->comment_count > 0) {
+                $post->decrement('comment_count');
+            }
+
             $comment->delete();
+
+            if ($author) {
+                $author->notify(new CommentRemovedByAdminNotification($comment));
+            }
             
             return response()->json(['message' => 'Комментарий успешно удален']);
         } catch (\Exception $e) {
             Log::error('Admin deleteComment error: ' . $e->getMessage());
             return response()->json(['message' => 'Ошибка при удалении комментария'], 500);
+        }
+    }
+
+    // Одобрить комментарий (публикация под постом)
+    public function approveComment($id): JsonResponse
+    {
+        try {
+            $comment = Comment::withTrashed()
+                ->with([
+                    'post' => function ($q) {
+                        $q->withTrashed();
+                    }
+                ])
+                ->findOrFail($id);
+
+            if ($comment->deleted_at) {
+                if ((bool) $comment->auto_moderation_passed === false) {
+                    $comment->restore();
+                } else {
+                    return response()->json(['message' => 'Нельзя одобрить удаленный комментарий'], 422);
+                }
+            }
+
+            $post = $comment->post;
+            if (!$post || $post->deleted_at) {
+                return response()->json(['message' => 'Публикация не найдена'], 404);
+            }
+
+            // Блокируем одобрение, если пост непубличен
+            if ($post->is_draft) {
+                return response()->json(['message' => 'Нельзя одобрить комментарий к непубличной публикации'], 422);
+            }
+
+            if (($post->moderation_status ?? '') !== 'approved') {
+                return response()->json(['message' => 'Нельзя одобрить комментарий к публикации на модерации'], 422);
+            }
+
+            if ($post->published_at && $post->published_at->isFuture()) {
+                return response()->json(['message' => 'Нельзя одобрить комментарий к публикации, запланированной на будущее'], 422);
+            }
+
+            if ($comment->moderation_status !== 'approved') {
+                $comment->update([
+                    'moderation_status' => 'approved',
+                    'approved_at' => now(),
+                ]);
+
+                $post->increment('comment_count');
+            }
+
+            return response()->json(['message' => 'Комментарий одобрен']);
+        } catch (\Exception $e) {
+            Log::error('Admin approveComment error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при одобрении комментария'], 500);
         }
     }
     
@@ -286,8 +805,27 @@ class AdminController extends Controller
     public function restoreComment($id): JsonResponse
     {
         try {
-            $comment = Comment::withTrashed()->findOrFail($id);
+            $comment = Comment::withTrashed()
+                ->with([
+                    'post' => function ($q) {
+                        $q->withTrashed();
+                    }
+                ])
+                ->findOrFail($id);
+
+            if (!$comment->trashed()) {
+                return response()->json(['message' => 'Комментарий уже восстановлен']);
+            }
+
+            $post = $comment->post;
+            $wasApproved = ($comment->moderation_status ?? '') === 'approved';
+
             $comment->restore();
+
+            // Синхронизируем счетчик только для одобренных комментариев к активной публикации.
+            if ($wasApproved && $post && !$post->trashed()) {
+                $post->increment('comment_count');
+            }
             
             return response()->json(['message' => 'Комментарий успешно восстановлен']);
         } catch (\Exception $e) {
@@ -300,127 +838,49 @@ class AdminController extends Controller
     public function generateReport()
     {
         try {
-            // Собираем все данные
             $stats = [
                 'total_users' => User::count(),
                 'active_users' => User::whereNull('deleted_at')->count(),
                 'deleted_users' => User::onlyTrashed()->count(),
+                'banned_users' => User::whereNull('deleted_at')->where('is_banned', true)->count(),
                 'total_posts' => Post::count(),
                 'active_posts' => Post::whereNull('deleted_at')->count(),
                 'deleted_posts' => Post::onlyTrashed()->count(),
+                'draft_posts' => Post::whereNull('deleted_at')->where('is_draft', true)->count(),
+                'pending_posts' => Post::whereNull('deleted_at')->where('moderation_status', 'pending')->count(),
+                'rejected_posts' => Post::whereNull('deleted_at')->where('moderation_status', 'rejected')->count(),
+                'approved_posts' => Post::whereNull('deleted_at')->where('is_draft', false)->where('moderation_status', 'approved')->count(),
                 'total_comments' => Comment::count(),
                 'active_comments' => Comment::whereNull('deleted_at')->count(),
                 'deleted_comments' => Comment::onlyTrashed()->count(),
+                'pending_comments' => Comment::whereNull('deleted_at')->where('moderation_status', 'pending')->count(),
+                'rejected_comments' => Comment::whereNull('deleted_at')->where('moderation_status', 'rejected')->count(),
             ];
 
-            // Получаем детальные данные
             $users = User::withTrashed()->with('roles')->get();
-            $posts = Post::withTrashed()->with('author')->get();
-            $comments = Comment::withTrashed()->with(['author', 'post'])->get();
+            $posts = Post::withTrashed()
+                ->with([
+                    'author' => function ($q) {
+                        $q->withTrashed();
+                    },
+                    'category:id,name',
+                ])
+                ->withCount(['likes', 'comments'])
+                ->get();
+            $comments = Comment::withTrashed()
+                ->with([
+                    'author' => function ($q) {
+                        $q->withTrashed();
+                    },
+                    'post' => function ($q) {
+                        $q->withTrashed();
+                    },
+                ])
+                ->get();
 
-            // Формируем CSV
-            $csvData = [];
-            
-            // Заголовок отчета
-            $csvData[] = ['ОТЧЕТ О РАБОТЕ ИНФОРМАЦИОННОЙ СИСТЕМЫ'];
-            $csvData[] = ['Дата создания отчета:', now()->format('d.m.Y H:i:s')];
-            $csvData[] = [''];
-            
-            // Общая статистика
-            $csvData[] = ['ОБЩАЯ СТАТИСТИКА'];
-            $csvData[] = [''];
-            $csvData[] = ['Показатель', 'Значение'];
-            $csvData[] = ['Всего пользователей (за все время)', $stats['total_users']];
-            $csvData[] = ['Активных пользователей', $stats['active_users']];
-            $csvData[] = ['Удаленных пользователей', $stats['deleted_users']];
-            $csvData[] = [''];
-            $csvData[] = ['Всего публикаций (за все время)', $stats['total_posts']];
-            $csvData[] = ['Активных публикаций', $stats['active_posts']];
-            $csvData[] = ['Удаленных публикаций', $stats['deleted_posts']];
-            $csvData[] = [''];
-            $csvData[] = ['Всего комментариев (за все время)', $stats['total_comments']];
-            $csvData[] = ['Активных комментариев', $stats['active_comments']];
-            $csvData[] = ['Удаленных комментариев', $stats['deleted_comments']];
-            $csvData[] = [''];
-            $csvData[] = [''];
+            $csv = (new AdminReportCsvBuilder())->build($stats, $users, $posts, $comments);
 
-            // Детальная информация о пользователях
-            $csvData[] = ['ПОЛЬЗОВАТЕЛИ'];
-            $csvData[] = [''];
-            $csvData[] = ['ID', 'Имя', 'Фамилия', 'Email', 'Username', 'Роль', 'Статус', 'Дата регистрации', 'Дата удаления'];
-            
-            foreach ($users as $user) {
-                $csvData[] = [
-                    $user->id,
-                    $user->name ?? '',
-                    $user->surname ?? '',
-                    $user->email,
-                    $user->username ?? '',
-                    $user->roles->pluck('name')->join(', '),
-                    $user->deleted_at ? 'Удален' : 'Активен',
-                    $user->created_at->format('d.m.Y H:i'),
-                    $user->deleted_at ? $user->deleted_at->format('d.m.Y H:i') : '-'
-                ];
-            }
-            
-            $csvData[] = [''];
-            $csvData[] = [''];
-
-            // Детальная информация о публикациях
-            $csvData[] = ['ПУБЛИКАЦИИ'];
-            $csvData[] = [''];
-            $csvData[] = ['ID', 'Название', 'Автор', 'Email автора', 'Теги', 'Лайков', 'Комментариев', 'Статус', 'Дата создания', 'Дата удаления'];
-            
-            foreach ($posts as $post) {
-                $csvData[] = [
-                    $post->id,
-                    $post->title,
-                    $post->author ? ($post->author->name . ' ' . ($post->author->surname ?? '')) : 'Неизвестен',
-                    $post->author ? $post->author->email : '-',
-                    $post->tags ?? '',
-                    $post->likes_count ?? 0,
-                    $post->comments_count ?? 0,
-                    $post->deleted_at ? 'Удален' : 'Активен',
-                    $post->created_at->format('d.m.Y H:i'),
-                    $post->deleted_at ? $post->deleted_at->format('d.m.Y H:i') : '-'
-                ];
-            }
-            
-            $csvData[] = [''];
-            $csvData[] = [''];
-
-            // Детальная информация о комментариях
-            $csvData[] = ['КОММЕНТАРИИ'];
-            $csvData[] = [''];
-            $csvData[] = ['ID', 'Текст', 'Автор', 'Email автора', 'Публикация', 'Статус', 'Дата создания', 'Дата удаления'];
-            
-            foreach ($comments as $comment) {
-                $csvData[] = [
-                    $comment->id,
-                    mb_substr($comment->content, 0, 100) . (mb_strlen($comment->content) > 100 ? '...' : ''),
-                    $comment->author ? ($comment->author->name . ' ' . ($comment->author->surname ?? '')) : 'Неизвестен',
-                    $comment->author ? $comment->author->email : '-',
-                    $comment->post ? mb_substr($comment->post->title, 0, 50) : 'Удалена',
-                    $comment->deleted_at ? 'Удален' : 'Активен',
-                    $comment->created_at->format('d.m.Y H:i'),
-                    $comment->deleted_at ? $comment->deleted_at->format('d.m.Y H:i') : '-'
-                ];
-            }
-
-            // Создаем CSV файл
             $filename = 'report_' . now()->format('Y-m-d_H-i-s') . '.csv';
-            $handle = fopen('php://temp', 'r+');
-            
-            // Добавляем BOM для корректного отображения UTF-8 в Excel
-            fprintf($handle, chr(0xEF).chr(0xBB).chr(0xBF));
-            
-            foreach ($csvData as $row) {
-                fputcsv($handle, $row, ';'); // Используем ; для лучшей совместимости с Excel
-            }
-            
-            rewind($handle);
-            $csv = stream_get_contents($handle);
-            fclose($handle);
 
             return response($csv, 200)
                 ->header('Content-Type', 'text/csv; charset=UTF-8')

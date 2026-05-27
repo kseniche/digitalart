@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import { apiFetch, ensureCsrfCookie, setAuthToken } from '../api';
 
 const AuthContext = createContext();
 
@@ -34,24 +35,35 @@ export const AuthProvider = ({ children }) => {
     return hasAdminRole;
   };
 
-  // Проверяем, есть ли сохраненные данные пользователя
-  useEffect(() => {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
-        setUser(parsedUser);
-        refreshUserFromServer();
-      } catch (error) {
-        localStorage.removeItem('user');
+  const refreshUserFromServer = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/user', { 
+        headers: { 
+          'Accept': 'application/json',
+        } 
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        const updatedUser = data.user || data;
+        setUser(updatedUser);
+        return updatedUser;
       }
+      if (res.status === 401) {
+        setAuthToken(null);
+        setUser(null);
+      }
+    } catch (error) {
+      setAuthToken(null);
+      setUser(null);
     }
-    setIsLoading(false);
+    return null;
   }, []);
 
-  const login = async (credentials) => {
+  const login = useCallback(async (credentials) => {
     try {
-      const response = await fetch('/api/login', {
+      await ensureCsrfCookie();
+      const response = await apiFetch('/api/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -62,14 +74,14 @@ export const AuthProvider = ({ children }) => {
   
       if (!response.ok) {
         let errorMessage = 'Ошибка входа';
-        
+        let errors = {};
         try {
           const errorData = await response.json();
-          
           if (response.status === 401) {
             errorMessage = errorData.message || 'Неверный email или пароль';
           } else if (response.status === 422) {
-            if (errorData.errors) {
+            if (errorData.errors && typeof errorData.errors === 'object') {
+              errors = errorData.errors;
               const firstError = Object.values(errorData.errors)[0];
               errorMessage = Array.isArray(firstError) ? firstError[0] : firstError;
             } else {
@@ -83,52 +95,26 @@ export const AuthProvider = ({ children }) => {
             errorMessage = 'Неверный email или пароль';
           }
         }
-        
-        return { success: false, error: errorMessage };
+        return { success: false, error: errorMessage, errors };
       }
   
-      const userData = await response.json();
-      const user = userData.user;
-      
-      // Запрашиваем полные данные пользователя с ролями
-      const token = userData.token;
-      if (token) {
-        try {
-          const userResponse = await fetch('/api/user', {
-            headers: {
-              'Accept': 'application/json',
-              'Authorization': `Bearer ${token}`
-            }
-          });
-          
-          if (userResponse.ok) {
-            const fullUserData = await userResponse.json();
-            
-            // Используем пользователя с ролями
-            const userWithRoles = fullUserData.user || fullUserData;
-            setUser(userWithRoles);
-            localStorage.setItem('user', JSON.stringify(userWithRoles));
-            localStorage.setItem('token', token);
-            return { success: true };
-          }
-        } catch (error) {
-          // Продолжаем с базовыми данными пользователя
-        }
+      const payload = await response.json();
+      setAuthToken(payload?.token || null);
+
+      const refreshed = await refreshUserFromServer();
+      if (!refreshed && payload?.user) {
+        setUser(payload.user);
       }
-      
-      // Fallback: используем данные без ролей
-      setUser(user);
-      localStorage.setItem('user', JSON.stringify(user));
-      localStorage.setItem('token', userData.token);
       return { success: true };
     } catch (error) {
       return { success: false, error: 'Ошибка соединения с сервером' };
     }
-  };
+  }, [refreshUserFromServer]);
 
-  const register = async (userData) => {
+  const register = useCallback(async (userData) => {
     try {
-      const response = await fetch('/api/register', {
+      await ensureCsrfCookie();
+      const response = await apiFetch('/api/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -139,9 +125,11 @@ export const AuthProvider = ({ children }) => {
 
       if (!response.ok) {
         let errorMessage = 'Ошибка регистрации';
+        let errors = {};
         try {
           const errorData = await response.json();
-          if (errorData.errors) {
+          if (errorData.errors && typeof errorData.errors === 'object') {
+            errors = errorData.errors;
             const firstError = Object.values(errorData.errors)[0];
             errorMessage = Array.isArray(firstError) ? firstError[0] : firstError;
           } else {
@@ -154,76 +142,54 @@ export const AuthProvider = ({ children }) => {
             errorMessage = 'Пользователь с таким email уже существует';
           }
         }
-        throw new Error(errorMessage);
+        return { success: false, error: errorMessage, errors };
       }
 
-      const result = await response.json();
-      const user = result.user;
-      
-      setUser(user);
-      localStorage.setItem('user', JSON.stringify(user));
-      localStorage.setItem('token', result.token);
+      const payload = await response.json();
+      setAuthToken(payload?.token || null);
+      const refreshed = await refreshUserFromServer();
+      if (!refreshed && payload?.user) {
+        setUser(payload.user);
+      }
       return { success: true };
     } catch (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: error.message || 'Ошибка регистрации', errors: {} };
     }
-  };
+  }, [refreshUserFromServer]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      if (token) {
-        await fetch('/api/logout', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json',
-          },
-        });
-      }
+      await apiFetch('/api/logout', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
     } catch (error) {
       // Ошибка при выходе
     } finally {
+      setAuthToken(null);
       setUser(null);
-      localStorage.removeItem('user');
-      localStorage.removeItem('token');
     }
-  };
+  }, []);
 
-  const refreshUserFromServer = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token || !user) return;
-      
-      const res = await fetch('/api/user', { 
-        headers: { 
-          'Accept': 'application/json', 
-          'Authorization': `Bearer ${token}` 
-        } 
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        const updatedUser = data.user || data;
-        
-        setUser(updatedUser);
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-      }
-    } catch (error) {
-      // Ошибка при обновлении данных пользователя
-    }
-  };
+  // Восстанавливаем пользователя только из серверной сессии Sanctum cookie.
+  useEffect(() => {
+    refreshUserFromServer().finally(() => setIsLoading(false));
+  }, [refreshUserFromServer]);
 
-  const value = {
+  const isAdmin = useMemo(() => checkIsAdmin(user), [user]);
+
+  const value = useMemo(() => ({
     user,
     isLoading,
     login,
     register,
     logout,
     isAuthenticated: !!user,
-    isAdmin: checkIsAdmin(user), // Вызываем функцию при каждом рендере
-    refreshUserFromServer
-  };
+    isAdmin,
+    refreshUserFromServer,
+  }), [user, isLoading, login, register, logout, isAdmin, refreshUserFromServer]);
 
   return (
     <AuthContext.Provider value={value}>

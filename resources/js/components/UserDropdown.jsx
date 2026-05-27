@@ -17,14 +17,14 @@ function UserDropdown({ user, onClose, onLogout }) {
       </Link>
       {isAdmin && (
         <>
-          <hr style={{ margin: '0.5rem 0', border: 'none', borderTop: '1px solid #e5e7eb' }} />
+          <hr className="dropdown-divider" />
           <Link to="/admin" className="dropdown-item admin-link" onClick={onClose}>
              Панель администратора
           </Link>
         </>
       )}
-      <hr style={{ margin: '0.5rem 0', border: 'none', borderTop: '2px solid #7B0000 ' }} />
-      <button className="dropdown-item" onClick={onLogout} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}>
+      <hr className="dropdown-divider dropdown-divider--strong" />
+      <button className="dropdown-item dropdown-button" onClick={onLogout}>
         Выйти
       </button>
     </div>

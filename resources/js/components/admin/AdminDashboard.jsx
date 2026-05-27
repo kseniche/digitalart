@@ -1,13 +1,16 @@
 import React from 'react';
+import { apiFetch } from '../../api';
+import { useToast } from '../../contexts/ToastContext';
+import EmptyState from '../common/EmptyState';
 
 function AdminDashboard({ stats, onRefresh }) {
+  const toast = useToast().toast;
+
   const handleDownloadReport = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/admin/report', {
+      const response = await apiFetch('/api/admin/report', {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Accept': 'text/csv',
         },
       });
@@ -30,16 +33,20 @@ function AdminDashboard({ stats, onRefresh }) {
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
-      alert('Отчёт успешно загружен');
+      toast.success('Отчёт успешно загружен');
     } catch (error) {
-      alert('Ошибка при скачивании отчёта');
+      toast.error('Ошибка при скачивании отчёта');
     }
   };
 
   if (!stats) {
     return (
       <div className="admin-dashboard">
-        <div className="loading">Загрузка статистики...</div>
+        <EmptyState
+          title="Статистика загружается"
+          text="Подождите немного или обновите данные вручную."
+          actions={<button className="admin-btn admin-btn-primary admin-btn-sm" onClick={onRefresh}>Обновить</button>}
+        />
       </div>
     );
   }
@@ -49,37 +56,33 @@ function AdminDashboard({ stats, onRefresh }) {
       title: 'Всего пользователей',
       value: stats.total_users,
       subtitle: `Активных: ${stats.active_users}`,
-      color: 'blue',
-      
+      color: 'brand',
     },
     {
       title: 'Всего публикаций',
       value: stats.total_posts,
       subtitle: `Активных: ${stats.active_posts}`,
-      color: 'green',
-      
+      color: 'brand',
     },
     {
       title: 'Всего комментариев',
       value: stats.total_comments,
       subtitle: `Активных: ${stats.active_comments}`,
-      color: 'purple',
-      
+      color: 'brand',
     },
     {
       title: 'Удаленных пользователей',
       value: stats.deleted_users,
       subtitle: 'Требуют восстановления',
-      color: '#7B0000',
-      
-    }
+      color: 'brand',
+    },
   ];
 
   return (
     <div className="admin-dashboard">
       <div className="dashboard-header">
         <h2>Общая статистика</h2>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div className="admin-dashboard-actions">
           <button 
             className="btn btn-primary"
             onClick={onRefresh}
@@ -99,7 +102,6 @@ function AdminDashboard({ stats, onRefresh }) {
       <div className="stats-grid">
         {statCards.map((card, index) => (
           <div key={index} className={`stat-card stat-card--${card.color}`}>
-            <div className="stat-card__icon">{card.icon}</div>
             <div className="stat-card__content">
               <h3 className="stat-card__title">{card.title}</h3>
               <div className="stat-card__value">{card.value}</div>

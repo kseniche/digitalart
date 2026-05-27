@@ -1,23 +1,60 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../api';
+import Alert from '../common/Alert';
+import '../../../css/app.css';
 
-function EditPostModal({ post, onClose, onSave }) {
+function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSettings = false }) {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    tags: ''
+    tags: '',
+    category_id: '',
+    is_draft: false,
+    publish_mode: 'now',
+    published_at: ''
   });
+  const [categories, setCategories] = useState([]);
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
+    apiFetch('/api/categories')
+      .then((r) => r.ok ? r.json() : [])
+      .then((list) => setCategories(Array.isArray(list) ? list : []))
+      .catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
     if (post) {
+      const pubAt = post.published_at;
+      const hasScheduled = pubAt && new Date(pubAt) > new Date();
+      let publishedAtLocal = '';
+      if (pubAt) {
+        const d = new Date(pubAt);
+        publishedAtLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      }
       setFormData({
         title: post.post_title || '',
         description: post.post_content || '',
-        tags: post.tags ? (Array.isArray(post.tags) ? post.tags.join(', ') : post.tags) : ''
+        tags: post.tags ? (Array.isArray(post.tags) ? post.tags.join(', ') : post.tags) : '',
+        category_id: post.category_id ? String(post.category_id) : '',
+        is_draft: !!post.is_draft,
+        publish_mode: hasScheduled ? 'schedule' : 'now',
+        published_at: publishedAtLocal
       });
     }
   }, [post]);
+
+  useEffect(() => {
+    if (serverErrors && typeof serverErrors === 'object' && Object.keys(serverErrors).length > 0) {
+      const flat = {};
+      Object.keys(serverErrors).forEach(key => {
+        const v = serverErrors[key];
+        flat[key] = Array.isArray(v) ? v[0] : v;
+      });
+      setErrors(prev => ({ ...prev, ...flat }));
+    }
+  }, [serverErrors]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -63,7 +100,7 @@ function EditPostModal({ post, onClose, onSave }) {
     try {
       await onSave(formData);
     } catch (error) {
-      setErrors({ general: error.message || 'Ошибка при сохранении изменений' });
+      setErrors(prev => ({ ...prev, general: error.message || 'Ошибка при сохранении изменений' }));
     } finally {
       setIsLoading(false);
     }
@@ -87,18 +124,7 @@ function EditPostModal({ post, onClose, onSave }) {
           Редактировать публикацию
         </h2>
 
-        {errors.general && (
-          <div style={{ 
-            color: '#7B0000', 
-            backgroundColor: '#f5f5f5', 
-            padding: '0.75rem', 
-            borderRadius: '8px', 
-            marginBottom: '1rem',
-            textAlign: 'center'
-          }}>
-            {errors.general}
-          </div>
-        )}
+        <Alert type="error" message={errors.general || ''} className="home-alert" />
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -115,13 +141,7 @@ function EditPostModal({ post, onClose, onSave }) {
               placeholder="Введите название работы"
               maxLength={255}
             />
-            <div style={{ 
-              display: 'flex',
-              justifyContent: 'space-between',
-              fontSize: '0.75rem', 
-              color: '#6b7280', 
-              marginTop: '0.25rem'
-            }}>
+            <div className="ui-form-help ui-form-help-row">
               <span>Обязательное поле</span>
               <span>{formData.title.length}/255</span>
             </div>
@@ -146,12 +166,8 @@ function EditPostModal({ post, onClose, onSave }) {
               rows={6}
               style={{ resize: 'vertical' }}
             />
-            <div style={{ 
-              fontSize: '0.75rem', 
-              color: '#6b7280',
-              marginTop: '0.25rem'
-            }}>
-              Обязательное поле
+            <div className="ui-form-help">
+              Обязательное поле. Markdown: **жирный**, *курсив*, - список, [ссылка](url).
             </div>
             {errors.description && (
               <div className="form-error" style={{ marginTop: '0.5rem' }}>
@@ -159,6 +175,87 @@ function EditPostModal({ post, onClose, onSave }) {
               </div>
             )}
           </div>
+
+          <div className="form-group">
+            <label htmlFor="category_id" className="form-label">
+              Категория
+            </label>
+            <select
+              id="category_id"
+              name="category_id"
+              value={formData.category_id}
+              onChange={handleChange}
+              className="form-input"
+              style={{ cursor: 'pointer' }}
+            >
+              <option value="">— Выберите категорию —</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {!lockPublishSettings && (
+          <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <input
+              type="checkbox"
+              id="is_draft"
+              name="is_draft"
+              checked={!!formData.is_draft}
+              onChange={(e) => setFormData(prev => ({ ...prev, is_draft: e.target.checked }))}
+            />
+            <label htmlFor="is_draft" className="form-label" style={{ marginBottom: 0 }}>
+              Сохранить как черновик (не публиковать в ленту)
+            </label>
+          </div>
+          )}
+
+          {!lockPublishSettings && !formData.is_draft && (
+            <div className="form-group">
+              <span className="form-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Публикация</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace' }}>
+                  <input
+                    type="radio"
+                    name="publish_mode"
+                    checked={formData.publish_mode === 'now'}
+                    onChange={() => setFormData(prev => ({ ...prev, publish_mode: 'now' }))}
+                  />
+                  Опубликовать сразу
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace' }}>
+                  <input
+                    type="radio"
+                    name="publish_mode"
+                    checked={formData.publish_mode === 'schedule'}
+                    onChange={() => setFormData(prev => ({ ...prev, publish_mode: 'schedule' }))}
+                  />
+                  Запланировать на дату
+                </label>
+                {formData.publish_mode === 'schedule' && (
+                  <input
+                    type="datetime-local"
+                    name="published_at"
+                    value={formData.published_at}
+                    min={new Date().toISOString().slice(0, 16)}
+                    onChange={handleChange}
+                    style={{
+                      padding: '0.5rem',
+                      borderRadius: '8px',
+                      border: '1px solid #D4D1CC',
+                      fontFamily: 'JetBrains Mono, monospace'
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {lockPublishSettings && (
+            <p className="ui-form-help" style={{ marginBottom: '1rem' }}>
+              Публикация уже опубликована: режим публикации, дата и статус черновика изменить нельзя.
+            </p>
+          )}
 
           <div className="form-group">
             <label htmlFor="tags" className="form-label">
@@ -173,24 +270,16 @@ function EditPostModal({ post, onClose, onSave }) {
               className="form-input"
               placeholder="цифровая живопись, пейзаж, photoshop (через запятую)"
             />
-            <div style={{ 
-              fontSize: '0.75rem', 
-              color: '#6b7280',
-              marginTop: '0.25rem'
-            }}>
+            <div className="ui-form-help">
               Теги разделяйте запятыми
             </div>
           </div>
 
-          <div style={{ 
-            display: 'flex', 
-            gap: '1rem',
-            marginTop: '1.5rem'
-          }}>
+          <div className="ui-actions-row" style={{ marginTop: '1.5rem' }}>
             <button
               type="button"
               onClick={onClose}
-              className="btn btn-secondary"
+              className="btn btn-outline"
               style={{ flex: 1 }}
               disabled={isLoading}
             >

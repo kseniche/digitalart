@@ -5,34 +5,70 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Comment;
 use App\Models\Post;
+use App\Services\AutoModerationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class CommentController extends Controller
 {
+    public function __construct(
+        private readonly AutoModerationService $autoModerationService
+    ) {}
+
     public function store(Request $request, Post $post)
     {
         $data = $request->validate([
-            'content' => ['required', 'string'],
+            'content' => ['required', 'string', 'max:2000'],
         ], [
             'content.required' => 'Содержание комментария обязательно',
-            'content.string' => 'Содержание комментария должно быть строкой'
+            'content.string' => 'Содержание комментария должно быть строкой',
+            'content.max' => 'Комментарий не должен превышать 2000 символов',
         ]);
 
+        if (!$post->isPubliclyVisible()) {
+            return response()->json(['message' => 'Публикация недоступна'], 404);
+        }
+
         try {
+            $autoModeration = $this->autoModerationService->checkText((string) $data['content']);
+            $autoModerationPassed = (bool) $autoModeration['passed'];
+            $autoModerationReason = $autoModerationPassed
+                ? null
+                : ($autoModeration['reason'] ?? 'Нарушение правил сообщества.');
+            $moderationStatus = $autoModerationPassed ? 'approved' : 'pending';
+
             $comment = Comment::create([
                 'comment_content' => $data['content'],
                 'user_id' => $request->user()->id,
                 'post_id' => $post->id,
+                'moderation_status' => $moderationStatus,
+                'approved_at' => $autoModerationPassed ? now() : null,
+                'auto_moderation_passed' => $autoModerationPassed,
+                'auto_moderation_reason' => $autoModerationReason,
+                'auto_moderation_checked_at' => now(),
             ]);
 
-            $post->increment('comment_count');
+            if (!$autoModerationPassed) {
+                $comment->delete();
+            } else {
+                $post->increment('comment_count');
+            }
 
             // Загружаем автора с аватаром
             $comment->load('author:id,name,user_surname,avatar');
 
+            // Email-уведомление владельцу поста (не отправляем, если комментатор — автор поста)
+            if ($post->user_id !== $request->user()->id) {
+                $post->load('author');
+                if ($post->author && !empty($post->author->email)) {
+                    $post->author->notify(new \App\Notifications\NewCommentNotification($comment));
+                }
+            }
+
             return response()->json([
-                'message' => 'Комментарий добавлен',
+                'message' => $autoModerationPassed
+                    ? 'Комментарий опубликован'
+                    : 'Комментарий не прошел автомодерацию и скрыт до решения администратора',
                 'comment' => [
                     'id' => $comment->id,
                     'content' => $comment->comment_content,
@@ -42,7 +78,9 @@ class CommentController extends Controller
                         'surname' => $comment->author->user_surname,
                         'avatar' => $comment->author->avatar,
                     ],
-                    'created_at' => $comment->created_at
+                    'created_at' => $comment->created_at,
+                    'auto_moderation_passed' => $autoModerationPassed,
+                    'auto_moderation_reason' => $autoModerationReason,
                 ]
             ], 201);
         } catch (\Throwable $e) {
@@ -64,10 +102,13 @@ class CommentController extends Controller
             }
 
             $post = $comment->post;
+            $wasApproved = $comment->moderation_status === 'approved';
             $comment->delete();
 
             // Обновляем счетчик комментариев
-            $post->decrement('comment_count');
+            if ($wasApproved && $post && $post->comment_count > 0) {
+                $post->decrement('comment_count');
+            }
 
             return response()->json([
                 'message' => 'Комментарий удален'
@@ -80,5 +121,36 @@ class CommentController extends Controller
             ]);
             return response()->json(['message' => 'Не удалось удалить комментарий'], 500);
         }
+    }
+
+    /**
+     * Toggle лайк комментария (критерий 3.7). POST /api/comments/{id}/like
+     */
+    public function toggleLike(Request $request, $id)
+    {
+        $comment = Comment::withCount('likes')->with('post')->find($id);
+        if (!$comment) {
+            return response()->json(['message' => 'Комментарий не найден'], 404);
+        }
+
+        if (($comment->moderation_status ?? '') !== 'approved') {
+            return response()->json(['message' => 'Комментарий недоступен'], 404);
+        }
+
+        $post = $comment->post;
+        if (!$post || !$post->isPubliclyVisible()) {
+            return response()->json(['message' => 'Комментарий недоступен'], 404);
+        }
+
+        $user = $request->user();
+        $exists = $comment->likes()->where('user_id', $user->id)->exists();
+        $likesCount = (int) $comment->likes_count;
+
+        if ($exists) {
+            $comment->likes()->detach($user->id);
+            return response()->json(['liked' => false, 'likes_count' => max(0, $likesCount - 1)]);
+        }
+        $comment->likes()->attach($user->id);
+        return response()->json(['liked' => true, 'likes_count' => $likesCount + 1]);
     }
 }

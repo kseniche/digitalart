@@ -1,264 +1,471 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  useFeedFilters,
+  FEED_DEFAULT_SORT_BY,
+  FEED_DEFAULT_SORT_DIR,
+} from '../contexts/FeedFiltersContext';
+import { useToast } from '../contexts/ToastContext';
+import { apiFetch } from '../api';
+import EmptyState from './common/EmptyState';
+import Alert from './common/Alert';
+import FeedPostCard from './FeedPostCard';
+import MasonryGrid from './common/MasonryGrid';
 import '../../css/app.css';
 
+const SORT_BY_OPTIONS = [
+  { value: 'created_at', label: 'Дата' },
+  { value: 'like_count', label: 'Популярность' },
+  { value: 'post_title', label: 'Название' },
+];
+const PER_PAGE_OPTIONS = [10, 25, 50];
+const SEARCH_DEBOUNCE_MS = 450;
+const TAG_FILTER_DEBOUNCE_MS = 450;
+
 function HomePage() {
-  const { user, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
+  const { toast } = useToast();
+  const {
+    searchInput,
+    setSearchInput,
+    searchQuery,
+    setSearchQuery,
+    tagFilterInput,
+    setTagFilterInput,
+    tagFilter,
+    setTagFilter,
+    categoryFilter,
+    setCategoryFilter,
+    sortBy,
+    setSortBy,
+    sortDir,
+    setSortDir,
+    perPage,
+    setPerPage,
+    currentPage,
+    setCurrentPage,
+    filtersPanelOpen,
+    setFiltersPanelOpen,
+    saveScrollPosition,
+    consumeScrollRestore,
+    resetAllFilters,
+  } = useFeedFilters();
+
+  const showGuestLogin = useCallback(() => setShowLoginModal(true), []);
   const [posts, setPosts] = useState([]);
-  const [filter, setFilter] = useState('popular');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [categories, setCategories] = useState([]);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [lastPage, setLastPage] = useState(1);
   const [error, setError] = useState('');
+  const [feedTotal, setFeedTotal] = useState(0);
+  const feedRequestIdRef = useRef(0);
+  const filtersMountedRef = useRef(false);
+  const scrollRestoredRef = useRef(false);
 
-  // Форматирование постов с правильным изображением
-  const formatPost = (post) => {
-    return {
-      id: post.id,
-      title: post.post_title,
-      author: {
-        id: post.author?.id,
-        name: post.author ? `${post.author.name} ${post.author.user_surname || ''}`.trim() : 'Неизвестный автор',
-        avatar: post.author?.avatar_url || post.author?.avatar || '/default-avatar.svg'
-      },
-      image: post.image_url || '/images/digital-art-1.svg',
-      description: post.post_content || '',
-      tags: post.tags ? (Array.isArray(post.tags) ? post.tags : post.tags.split(',').map(tag => tag.trim())) : [],
-      likes: post.like_count || 0,
-      isLiked: !!post.liked,
-      comments: post.comment_count || 0,
-      createdAt: post.created_at || ''
-    };
-  };
+  const formatPost = (post) => ({
+    id: post.id,
+    title: post.post_title,
+    author: {
+      id: post.author?.id,
+      name: post.author ? `${post.author.name} ${post.author.user_surname || ''}`.trim() : 'Неизвестный автор',
+      avatar: post.author?.avatar_url || post.author?.avatar || '/default-avatar.svg',
+    },
+    image: post.image_url || '/images/digital-art-1.jpg',
+    mediaType: post.media_type || 'image',
+    description: post.post_content || '',
+    tags: post.tags ? (Array.isArray(post.tags) ? post.tags : post.tags.split(',').map((tag) => tag.trim())) : [],
+    likes: post.like_count || 0,
+    isLiked: !!post.liked,
+    comments: post.comment_count || 0,
+    createdAt: post.created_at || '',
+    category: post.category || null,
+  });
 
-  // Загрузка постов
-  const loadPosts = useCallback(async (page = 1, append = false) => {
-    if (page === 1) {
-        setIsLoading(true);
-    } else {
-        setIsLoadingMore(true);
+  const buildFeedParams = useCallback((page) => {
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('per_page', String(perPage));
+    params.set('sort_by', sortBy);
+    params.set('sort_dir', sortDir);
+    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+    if (tagFilter.trim()) params.set('tag', tagFilter.trim());
+    if (categoryFilter) {
+      params.set('category', categoryFilter);
+      params.set('category_id', categoryFilter);
     }
-    
+    return params.toString();
+  }, [sortBy, sortDir, searchQuery, tagFilter, categoryFilter, perPage]);
+
+  const loadPosts = useCallback(async (page = 1) => {
+    const requestId = ++feedRequestIdRef.current;
+    setIsFeedLoading(true);
+    scrollRestoredRef.current = false;
     try {
-        const sortParam = filter === 'popular' ? 'popular' : 'new';
-        const response = await fetch(`/api/posts?sort=${sortParam}&page=${page}&per_page=20`);
+      const query = buildFeedParams(page);
+      const response = await apiFetch(`/api/feed?${query}`);
 
-        if (response.ok) {
-            const data = await response.json();
-            const newPosts = (data.data || data).map(formatPost);
-
-            if (append) {
-                setPosts(prev => [...prev, ...newPosts]);
-            } else {
-                setPosts(newPosts);
-            }
-
-            setHasMore(!!data.next_page_url);
-            setCurrentPage(page);
-            setError('');
-        } else {
-            if (!append) {
-                setPosts([]);
-                setError('Не удалось загрузить публикации. Попробуйте позже.');
-            }
-        }
-    } catch (error) {
-        if (!append) {
-            setPosts([]);
-            setError('Ошибка соединения с сервером');
-        }
-    } finally {
-        setIsLoading(false);
-        setIsLoadingMore(false);
-    }
-  }, [filter]);
-
-  // Загрузка при изменении фильтра
-  useEffect(() => {
-    setCurrentPage(1);
-    setHasMore(true);
-    loadPosts(1, false);
-  }, [filter, loadPosts]);
-
-  // Бесконечный скролл
-  useEffect(() => {
-    const handleScroll = () => {
-      if (window.innerHeight + document.documentElement.scrollTop + 500 
-          < document.documentElement.offsetHeight || !hasMore || isLoading || isLoadingMore) {
+      if (requestId !== feedRequestIdRef.current) {
         return;
       }
-      loadPosts(currentPage + 1, true);
-    };
 
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [currentPage, hasMore, isLoading, isLoadingMore, loadPosts]);
+      if (response.ok) {
+        const data = await response.json();
+        const rows = Array.isArray(data?.data)
+          ? data.data
+          : (Array.isArray(data) ? data : []);
+        setPosts(rows.map(formatPost));
+        setFeedTotal(typeof data.total === 'number' ? data.total : rows.length);
+        setCurrentPage(typeof data.current_page === 'number' ? data.current_page : page);
+        setLastPage(typeof data.last_page === 'number' ? data.last_page : 1);
+        setError('');
+      } else {
+        setPosts([]);
+        setFeedTotal(0);
+        setCurrentPage(1);
+        setLastPage(1);
+        const msg = 'Не удалось загрузить публикации. Попробуйте позже.';
+        setError(msg);
+        toast.error(msg);
+      }
+    } catch {
+      if (requestId !== feedRequestIdRef.current) {
+        return;
+      }
+      setPosts([]);
+      setFeedTotal(0);
+      setCurrentPage(1);
+      setLastPage(1);
+      const msg = 'Ошибка соединения с сервером';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      if (requestId === feedRequestIdRef.current) {
+        setIsFeedLoading(false);
+      }
+    }
+  }, [buildFeedParams, toast, setCurrentPage]);
 
-  // Фильтрация постов
-  const filteredPosts = posts.filter(post =>
-    post.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    post.author.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    post.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+  useEffect(() => {
+    apiFetch('/api/categories')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setCategories(Array.isArray(list) ? list : []))
+      .catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchQuery(searchInput.trim());
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput, setSearchQuery]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setTagFilter(tagFilterInput.trim());
+    }, TAG_FILTER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [tagFilterInput, setTagFilter]);
+
+  const filterSignature = useMemo(
+    () => JSON.stringify({ searchQuery, tagFilter, categoryFilter, sortBy, sortDir, perPage }),
+    [searchQuery, tagFilter, categoryFilter, sortBy, sortDir, perPage]
   );
 
-  if (isLoading) {
-    return (
-      <div className="main-content">
-        <div style={{ textAlign: 'center', padding: '4rem 0' }}>
-          <div style={{ fontSize: '1.5rem', color: '#6b7280' }}>Загрузка...</div>
-        </div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    loadPosts(currentPage);
+  }, [currentPage, filterSignature, loadPosts]);
+
+  useEffect(() => {
+    if (!filtersMountedRef.current) {
+      filtersMountedRef.current = true;
+      return;
+    }
+    if (currentPage !== 1) {
+      setCurrentPage(1);
+    } else {
+      loadPosts(1);
+    }
+  }, [filterSignature, setCurrentPage, currentPage, loadPosts]);
+
+  useEffect(() => {
+    return () => {
+      saveScrollPosition(window.scrollY);
+      filtersMountedRef.current = false;
+    };
+  }, [saveScrollPosition]);
+
+  useEffect(() => {
+    if (isFeedLoading || scrollRestoredRef.current) {
+      return;
+    }
+    const y = consumeScrollRestore();
+    if (y == null) {
+      return;
+    }
+    scrollRestoredRef.current = true;
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: y, behavior: 'auto' });
+    });
+  }, [isFeedLoading, posts.length, consumeScrollRestore]);
+
+  const goToPage = (page) => {
+    if (page < 1 || page > lastPage || page === currentPage || isFeedLoading) return;
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const pageNumbers = useMemo(() => {
+    if (lastPage <= 1) return [];
+    if (lastPage <= 7) {
+      return Array.from({ length: lastPage }, (_, i) => i + 1);
+    }
+    const pages = new Set([1, lastPage, currentPage, currentPage - 1, currentPage + 1]);
+    const sorted = [...pages].filter((p) => p >= 1 && p <= lastPage).sort((a, b) => a - b);
+    const result = [];
+    sorted.forEach((p, i) => {
+      if (i > 0 && p - sorted[i - 1] > 1) result.push('…');
+      result.push(p);
+    });
+    return result;
+  }, [currentPage, lastPage]);
+
+  const displayPosts = posts;
+  const hasActiveFilters =
+    searchInput.trim() !== '' ||
+    tagFilterInput.trim() !== '' ||
+    categoryFilter !== '' ||
+    sortBy !== FEED_DEFAULT_SORT_BY ||
+    sortDir !== FEED_DEFAULT_SORT_DIR;
 
   return (
     <div className="main-content">
       <div className="search-section">
-        <div className="search-bar">
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Поиск по названию, автору или тегам..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <div className="filter-buttons">
+        <div className="homepage-toolbar">
+          <div className="search-bar">
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Поиск по названию, содержимому, тегам..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
           <button
-            className={`filter-btn ${filter === 'popular' ? 'active' : ''}`}
-            onClick={() => setFilter('popular')}
+            type="button"
+            className={`homepage-filters-toggle-btn${hasActiveFilters ? ' is-active' : ''}`}
+            aria-expanded={filtersPanelOpen}
+            aria-label={filtersPanelOpen ? 'Скрыть фильтры' : 'Показать фильтры'}
+            title={filtersPanelOpen ? 'Скрыть фильтры' : 'Фильтры'}
+            onClick={() => setFiltersPanelOpen((prev) => !prev)}
           >
-            Популярные
-          </button>
-          <button
-            className={`filter-btn ${filter === 'newest' ? 'active' : ''}`}
-            onClick={() => setFilter('newest')}
-          >
-            Новые
-          </button>
-        </div>
-      </div>
-
-      {/* Сообщение об ошибке */}
-      {error && (
-        <div style={{
-          backgroundColor: '#f5f5f5',
-          border: '1px solid #7B0000',
-          borderRadius: '8px',
-          padding: '1rem',
-          marginBottom: '1.5rem',
-          color: '#7B0000',
-          fontSize: '0.875rem',
-          fontFamily: 'JetBrains Mono, monospace',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between'
-        }}>
-          {error}
-          <button
-            onClick={() => setError('')}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#7B0000',
-              cursor: 'pointer',
-              fontSize: '1.25rem',
-              lineHeight: 1,
-              padding: 0
-            }}
-          >
-            ×
+            <svg
+              className="homepage-filters-toggle-icon"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M4 6h16" />
+              <path d="M7 12h10" />
+              <path d="M10 18h4" />
+            </svg>
           </button>
         </div>
-      )}
-
-      <div className="fixed-height-grid">
-        {filteredPosts.map(post => (
-          <div key={post.id} className="fixed-height-card">
-            <div className="card-image-wrapper">
-              {isAuthenticated ? (
-                <Link to={`/post/${post.id}`}>
-                  <img 
-                    src={post.image} 
-                    alt={post.title} 
-                    className="fixed-height-image"
-                    loading="lazy"
-                    onError={(e) => {
-                      console.error('Image failed to load:', post.image);
-                      e.target.src = '/images/digital-art-1.svg';
-                    }}
-                  />
-                </Link>
-              ) : (
-                <div onClick={() => setShowLoginModal(true)} style={{ cursor: 'pointer', height: '100%' }}>
-                  <img 
-                    src={post.image} 
-                    alt={post.title} 
-                    className="fixed-height-image"
-                    loading="lazy"
-                    onError={(e) => {
-                      console.error('Image failed to load:', post.image);
-                      e.target.src = '/images/digital-art-1.svg';
-                    }}
-                  />
-                </div>
-              )}
+        <div className={`homepage-filters-panel${filtersPanelOpen ? ' is-open' : ''}`}>
+          <div className="homepage-filters-grid">
+            <div className="homepage-filter-block homepage-filter-block--tag">
+              <input
+                type="text"
+                className="homepage-tag-search-input"
+                placeholder="Поиск по тегам..."
+                value={tagFilterInput}
+                onChange={(e) => setTagFilterInput(e.target.value)}
+                aria-label="Поиск по тегам"
+                autoComplete="off"
+                spellCheck={false}
+                inputMode="search"
+              />
             </div>
-
-            <div className="card-info">
-              <h3 className="card-title">
-                {isAuthenticated ? (
-                  <Link to={`/post/${post.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                    {post.title}
-                  </Link>
-                ) : (
-                  <span onClick={() => setShowLoginModal(true)} style={{ cursor: 'pointer' }}>
-                    {post.title}
-                  </span>
-                )}
-              </h3>
-
-              <div className="card-author">
-                {isAuthenticated ? (
-                  <Link to={`/profile/${post.author.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <img 
-                        src={post.author.avatar} 
-                        alt={post.author.name}
-                        className="author-avatar"
-                        onError={(e) => {
-                          e.target.src = '/default-avatar.svg';
-                        }}
-                      />
-                      <span className="author-name">{post.author.name}</span>
-                    </div>
-                  </Link>
-                ) : (
-                  <span onClick={() => setShowLoginModal(true)} style={{ cursor: 'pointer' }}>
-                    {post.author.name}
-                  </span>
-                )}
+            <div className="homepage-filter-block">
+              <label style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.875rem', color: '#111827' }}>Категория:</label>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                style={{
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: '8px',
+                  border: '1px solid #D4D1CC',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  minWidth: '140px',
+                }}
+              >
+                <option value="">Все категории</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={String(c.id)}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="homepage-filter-block">
+              <label style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.875rem', color: '#111827' }}>Сортировка:</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%' }}>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  style={{
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '8px',
+                    border: '1px solid #D4D1CC',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {SORT_BY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="homepage-sort-dir-btn"
+                  onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                  title={sortDir === 'asc' ? 'По возрастанию (клик — по убыванию)' : 'По убыванию (клик — по возрастанию)'}
+                >
+                  {sortDir === 'asc' ? '↑' : '↓'}
+                </button>
+              </div>
+            </div>
+            <div className="homepage-filter-block">
+              <label style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.875rem', color: '#111827' }}>На странице:</label>
+              <select
+                value={perPage}
+                onChange={(e) => setPerPage(Number(e.target.value))}
+                style={{
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: '8px',
+                  border: '1px solid #D4D1CC',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  minWidth: '80px',
+                }}
+                aria-label="Количество публикаций на странице"
+              >
+                {PER_PAGE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+            <div className="homepage-filter-block homepage-filter-block--reset">
+              <label
+                style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.875rem', color: '#111827' }}
+                aria-hidden="true"
+              >
+                {'\u00a0'}
+              </label>
+              <div className="homepage-filter-reset-row">
+                <button
+                  type="button"
+                  className="homepage-per-page-btn"
+                  onClick={resetAllFilters}
+                  disabled={!hasActiveFilters}
+                  title="Сбросить все фильтры"
+                >
+                  Сброс
+                </button>
               </div>
             </div>
           </div>
-        ))}
+        </div>
       </div>
 
-      {isLoadingMore && (
-        <div style={{ textAlign: 'center', padding: '2rem 0' }}>
-          <div style={{ fontSize: '1rem', color: '#6b7280' }}>Загрузка...</div>
-        </div>
+      <Alert type="error" message={error} onClose={() => setError('')} className="home-alert" />
+
+      {!isFeedLoading && displayPosts.length > 0 && (
+        <p
+          className="homepage-feed-meta"
+          style={{
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: '0.875rem',
+            color: '#6b7280',
+            margin: '0 0 1rem 0',
+          }}
+        >
+          Показано {displayPosts.length} из {feedTotal} · страница {currentPage} из {lastPage}
+        </p>
       )}
 
-      {filteredPosts.length === 0 && !isLoading && (
-        <div className="empty-state">
-          <div style={{ fontSize: '1.5rem', color: '#6b7280', marginBottom: '1rem' }}>Работы не найдены</div>
-          <div style={{ color: '#9ca3af' }}>Попробуйте изменить поисковый запрос или фильтры</div>
-        </div>
+      {isFeedLoading && displayPosts.length === 0 && (
+        <p className="homepage-feed-loading" style={{ textAlign: 'center', padding: '2rem 0', color: '#6b7280' }}>
+          Загрузка...
+        </p>
+      )}
+      {displayPosts.length > 0 && (
+        <MasonryGrid loading={isFeedLoading} aria-busy={isFeedLoading}>
+          {displayPosts.map((post) => (
+            <FeedPostCard
+              key={post.id}
+              post={post}
+              isAuthenticated={isAuthenticated}
+              onGuestClick={showGuestLogin}
+            />
+          ))}
+        </MasonryGrid>
+      )}
+
+      {lastPage > 1 && (
+        <nav className="pagination homepage-pagination" aria-label="Навигация по страницам">
+          <button
+            type="button"
+            className="btn btn-outline"
+            disabled={currentPage <= 1 || isFeedLoading}
+            onClick={() => goToPage(currentPage - 1)}
+          >
+            ← Предыдущая
+          </button>
+          <div className="homepage-pagination-pages">
+            {pageNumbers.map((p, idx) => (
+              typeof p === 'number' ? (
+                <button
+                  key={`page-${p}`}
+                  type="button"
+                  className={`btn btn-outline homepage-pagination-page${p === currentPage ? ' is-active' : ''}`}
+                  disabled={isFeedLoading}
+                  aria-current={p === currentPage ? 'page' : undefined}
+                  onClick={() => goToPage(p)}
+                >
+                  {p}
+                </button>
+              ) : (
+                <span key={`ellipsis-${idx}`} className="pagination-info">…</span>
+              )
+            ))}
+          </div>
+          <button
+            type="button"
+            className="btn btn-outline"
+            disabled={currentPage >= lastPage || isFeedLoading}
+            onClick={() => goToPage(currentPage + 1)}
+          >
+            Следующая →
+          </button>
+        </nav>
+      )}
+
+      {displayPosts.length === 0 && !isFeedLoading && (
+        <EmptyState
+          title="Работы не найдены"
+          text="Попробуйте изменить поисковый запрос или фильтры. В ленте только одобренные опубликованные работы."
+          actions={
+            <>
+              <button className="btn btn-outline" onClick={resetAllFilters}>Сбросить фильтры</button>
+              {isAuthenticated && <Link to="/create" className="btn btn-primary">Создать публикацию</Link>}
+            </>
+          }
+        />
       )}
 
       {showLoginModal && (

@@ -2,6 +2,9 @@ import React from 'react';
 
 function CommentCard({ comment, onAction }) {
   const isDeleted = comment.deleted_at !== null;
+  const isApproved = comment.moderation_status === 'approved';
+  const isPending = comment.moderation_status === 'pending';
+  const autoModerationPassed = comment.auto_moderation_passed !== false;
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('ru-RU', {
@@ -34,13 +37,28 @@ function CommentCard({ comment, onAction }) {
             <p className="admin-comment-date">{formatDate(comment.created_at)}</p>
           </div>
         </div>
-        {isDeleted && <div className="deleted-badge">Удален</div>}
+        <div className="admin-status-row" style={{ alignItems: 'center' }}>
+          {comment.author_deleted && <span className="admin-status-badge admin-status-badge--rejected">Автор удален</span>}
+          {isPending && <span className="admin-status-badge admin-status-badge--pending">На модерации</span>}
+          {isApproved && <span className="admin-status-badge admin-status-badge--approved">Одобрен</span>}
+          {autoModerationPassed ? (
+            <span className="admin-status-badge admin-status-badge--approved">Авто: пройдено</span>
+          ) : (
+            <span className="admin-status-badge admin-status-badge--rejected">Авто: не пройдено</span>
+          )}
+          {isDeleted && <div className="deleted-badge">Удален</div>}
+        </div>
       </div>
 
       <div className="admin-comment-card__content">
         <p className="admin-comment-text">
           {truncateText(comment.comment_content)}
         </p>
+        {!autoModerationPassed && comment.auto_moderation_reason && (
+          <p className="admin-post-preview" style={{ marginTop: '0.5rem' }}>
+            Причина автомодерации: {comment.auto_moderation_reason}
+          </p>
+        )}
       </div>
 
       {comment.post && (
@@ -62,21 +80,20 @@ function CommentCard({ comment, onAction }) {
       )}
 
       <div className="admin-comment-card__actions">
-        {isDeleted ? (
+        {!isDeleted && !isApproved && (
           <button
             className="admin-btn admin-btn-success admin-btn-sm"
-            onClick={() => onAction('restore', comment.id)}
+            onClick={() => onAction('approve', comment.id)}
           >
-            Восстановить
-          </button>
-        ) : (
-          <button
-            className="admin-btn admin-btn-danger admin-btn-sm"
-            onClick={() => onAction('delete', comment.id)}
-          >
-            Удалить
+            Одобрить
           </button>
         )}
+        <button
+          className="admin-btn admin-btn-danger admin-btn-sm"
+          onClick={() => onAction('delete', comment.id)}
+        >
+          Удалить
+        </button>
       </div>
     </div>
   );

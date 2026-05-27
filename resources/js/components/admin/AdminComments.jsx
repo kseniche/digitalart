@@ -1,19 +1,29 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../api';
+import { useToast } from '../../contexts/ToastContext';
 import CommentCard from './CommentCard';
+import ConfirmModal from '../modals/ConfirmModal';
+import EmptyState from '../common/EmptyState';
+import Alert from '../common/Alert';
 
 function AdminComments() {
+  const toast = useToast().toast;
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('pending');
+  const [autoModerationFilter, setAutoModerationFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [successMessage, setSuccessMessage] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState({ open: false, commentId: null });
+  const [newBannedWord, setNewBannedWord] = useState('');
 
   useEffect(() => {
     fetchComments();
-  }, [statusFilter, searchQuery, currentPage]);
+  }, [statusFilter, autoModerationFilter, searchQuery, currentPage]);
+
 
   const fetchComments = async () => {
     try {
@@ -21,12 +31,12 @@ function AdminComments() {
       const params = new URLSearchParams({
         page: currentPage,
         ...(statusFilter !== 'all' && { status: statusFilter }),
+        ...(autoModerationFilter !== 'all' && { auto_moderation: autoModerationFilter }),
         ...(searchQuery && { search: searchQuery }),
       });
 
-      const response = await fetch(`/api/admin/comments?${params}`, {
+      const response = await apiFetch(`/api/admin/comments?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
       });
@@ -37,142 +47,126 @@ function AdminComments() {
         setTotalPages(data.last_page || 1);
         setError(null);
       } else {
-        setError('Не удалось загрузить список комментариев. Попробуйте позже.');
+        const msg = 'Не удалось загрузить список комментариев. Попробуйте позже.';
+        setError(msg);
+        toast.error(msg);
       }
-    } catch (error) {
-      setError('Ошибка соединения с сервером');
+    } catch (err) {
+      const msg = 'Ошибка соединения с сервером';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
 
+  const addBannedWord = async (e) => {
+    e.preventDefault();
+    const word = newBannedWord.trim();
+    if (!word) return;
+
+    try {
+      const response = await apiFetch('/api/admin/banned-words', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word }),
+      });
+
+      if (response.ok) {
+        setNewBannedWord('');
+        toast.success('Слово добавлено в словарь');
+      } else {
+        const data = await response.json().catch(() => ({}));
+        toast.error(data?.message || 'Не удалось добавить слово');
+      }
+    } catch {
+      toast.error('Ошибка соединения с сервером');
+    }
+  };
+
   const handleCommentAction = (action, commentId) => {
     if (action === 'delete') {
-      deleteComment(commentId);
-    } else if (action === 'restore') {
-      restoreComment(commentId);
+      setConfirmDelete({ open: true, commentId });
+    } else if (action === 'approve') {
+      approveComment(commentId);
     }
   };
 
   const deleteComment = async (commentId) => {
-    if (!window.confirm('Вы уверены, что хотите удалить этот комментарий?')) {
-      return;
-    }
-
     try {
-      const response = await fetch(`/api/admin/comments/${commentId}`, {
+      const response = await apiFetch(`/api/admin/comments/${commentId}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
       });
 
       if (response.ok) {
-        setSuccessMessage('Комментарий успешно удалён');
+        const msg = 'Комментарий успешно удалён';
+        setSuccessMessage(msg);
+        toast.success(msg);
         fetchComments();
       } else {
-        setError('Не удалось удалить комментарий');
+        const msg = 'Не удалось удалить комментарий';
+        setError(msg);
+        toast.error(msg);
       }
-    } catch (error) {
-      setError('Ошибка соединения с сервером');
+    } catch (err) {
+      const msg = 'Ошибка соединения с сервером';
+      setError(msg);
+      toast.error(msg);
     }
   };
 
-  const restoreComment = async (commentId) => {
+  const approveComment = async (commentId) => {
     try {
-      const response = await fetch(`/api/admin/comments/${commentId}/restore`, {
+      const response = await apiFetch(`/api/admin/comments/${commentId}/approve`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
       });
 
       if (response.ok) {
-        setSuccessMessage('Комментарий успешно восстановлен');
+        const msg = 'Комментарий одобрен';
+        setSuccessMessage(msg);
+        toast.success(msg);
         fetchComments();
       } else {
-        setError('Не удалось восстановить комментарий');
+        const msg = 'Не удалось одобрить комментарий';
+        setError(msg);
+        toast.error(msg);
       }
-    } catch (error) {
-      setError('Ошибка соединения с сервером');
+    } catch (err) {
+      const msg = 'Ошибка соединения с сервером';
+      setError(msg);
+      toast.error(msg);
     }
   };
 
 
   return (
     <div className="admin-comments">
+      <ConfirmModal
+        open={confirmDelete.open}
+        title="Удаление комментария"
+        message="Вы уверены, что хотите удалить этот комментарий?"
+        confirmText="Удалить"
+        cancelText="Отмена"
+        variant="danger"
+        onConfirm={() => {
+          if (confirmDelete.commentId) deleteComment(confirmDelete.commentId);
+          setConfirmDelete({ open: false, commentId: null });
+        }}
+        onClose={() => setConfirmDelete({ open: false, commentId: null })}
+      />
       <div className="admin-section-header">
-        <h2>Управление комментариями</h2>
+        <h2>Модерация комментариев</h2>
         
         {/* Сообщения об успехе и ошибках */}
-        {successMessage && successMessage !== '' && (
-          <div style={{
-            backgroundColor: '#f0fdf4',
-            border: '1px solid #86efac',
-            borderRadius: '8px',
-            padding: '1rem',
-            marginTop: '1rem',
-            marginBottom: '1rem',
-            color: '#166534',
-            fontSize: '0.875rem',
-            fontFamily: 'JetBrains Mono, monospace',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            {successMessage}
-            <button
-              onClick={() => setSuccessMessage('')}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#166534',
-                cursor: 'pointer',
-                fontSize: '1.25rem',
-                lineHeight: 1,
-                padding: 0
-              }}
-            >
-              ×
-            </button>
-          </div>
-        )}
-
-        {error && error !== '' && (
-          <div style={{
-            backgroundColor: '#f5f5f5',
-            border: '1px solid #7B0000',
-            borderRadius: '8px',
-            padding: '1rem',
-            marginTop: '1rem',
-            marginBottom: '1rem',
-            color: '#7B0000',
-            fontSize: '0.875rem',
-            fontFamily: 'JetBrains Mono, monospace',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            {error}
-            <button
-              onClick={() => setError('')}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#7B0000',
-                cursor: 'pointer',
-                fontSize: '1.25rem',
-                lineHeight: 1,
-                padding: 0
-              }}
-            >
-              ×
-            </button>
-          </div>
-        )}
-        <div className="admin-filters">
+        <Alert type="success" message={successMessage} onClose={() => setSuccessMessage('')} className="admin-alert" />
+        <Alert type="error" message={error} onClose={() => setError('')} className="admin-alert" />
+        <div className="admin-filters admin-filters--sticky">
           <input
             type="text"
             placeholder="Поиск по содержимому комментария..."
@@ -186,18 +180,56 @@ function AdminComments() {
 
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setCurrentPage(1);
+            }}
             className="filter-select"
           >
-            <option value="all">Все комментарии</option>
-            <option value="active">Активные</option>
+            <option value="pending">На модерации</option>
+            <option value="approved">Одобренные</option>
             <option value="deleted">Удаленные</option>
+            <option value="all">Все комментарии</option>
+          </select>
+
+          <select
+            value={autoModerationFilter}
+            onChange={(e) => {
+              setAutoModerationFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="filter-select"
+          >
+            <option value="all">Все</option>
+            <option value="passed">Прошли автомодерацию</option>
+            <option value="failed">Не прошли автомодерацию</option>
           </select>
         </div>
       </div>
 
+      <div className="admin-banned-words">
+        <h3 className="admin-banned-words__title">Словарь запрещенных слов</h3>
+        <form className="admin-banned-words__form" onSubmit={addBannedWord}>
+          <input
+            type="text"
+            placeholder="Добавить новое слово..."
+            value={newBannedWord}
+            onChange={(e) => setNewBannedWord(e.target.value)}
+            className="admin-search-input"
+          />
+          <button type="submit" className="admin-btn admin-btn-primary admin-btn-sm">Добавить</button>
+        </form>
+      </div>
+
       {loading ? (
-        <div className="loading">Загрузка комментариев...</div>
+        <div className="admin-skeleton-list">
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <div key={idx} className="admin-skeleton-card">
+              <div className="admin-skeleton admin-skeleton--line" />
+              <div className="admin-skeleton admin-skeleton--line short" />
+            </div>
+          ))}
+        </div>
       ) : error ? (
         <div className="error">{error}</div>
       ) : (
@@ -213,13 +245,24 @@ function AdminComments() {
           </div>
 
           {comments.length === 0 && (
-            <div className="empty-state">
-              <p>Комментарии не найдены</p>
-            </div>
+            <EmptyState
+              title="Комментарии не найдены"
+              text="Нет элементов по текущему фильтру. Проверьте очередь модерации."
+              actions={
+                <>
+                  <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => { setStatusFilter('pending'); setCurrentPage(1); }}>
+                    Перейти в модерацию
+                  </button>
+                  <button className="admin-btn admin-btn-outline admin-btn-sm" onClick={() => { setStatusFilter('all'); setSearchQuery(''); setCurrentPage(1); }}>
+                    Сбросить фильтры
+                  </button>
+                </>
+              }
+            />
           )}
 
           {totalPages > 1 && (
-            <div className="pagination">
+            <div className="admin-pagination">
               <button
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                 disabled={currentPage === 1}
@@ -227,7 +270,7 @@ function AdminComments() {
               >
                 Назад
               </button>
-              <span className="pagination-info">
+              <span className="admin-pagination-info">
                 Страница {currentPage} из {totalPages}
               </span>
               <button

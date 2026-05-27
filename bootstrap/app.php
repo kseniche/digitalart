@@ -17,17 +17,21 @@ return Application::configure(basePath: dirname(__DIR__))
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
+        // CSP для защиты от XSS (критерий 2.2.9)
+        $middleware->append(\App\Http\Middleware\ContentSecurityPolicy::class);
+
         $middleware->alias([
+            'optional_sanctum' => \App\Http\Middleware\OptionalSanctum::class,
             'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
             'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
+            'not_banned' => \App\Http\Middleware\CheckIfNotBanned::class,
         ]);
 
-        //  Отключение CSRF для API 
-        $middleware->validateCsrfTokens(except: [
-            'api/*',
-        ]);
+        // CSRF для SPA: API не исключаем — запросы с stateful-доменов проходят через cookie + X-XSRF-TOKEN.
+        // Маршрут GET /sanctum/csrf-cookie (Sanctum) доступен без авторизации и выставляет cookie.
+        $middleware->validateCsrfTokens(except: []);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
       

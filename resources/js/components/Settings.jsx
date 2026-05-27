@@ -1,17 +1,35 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
+import { apiFetch } from '../api';
+import {
+  formatPhoneMask,
+  normalizePhoneStorage,
+  normalizeWebsiteUrl,
+  phoneValidationMessage,
+  phoneInputHint,
+  validatePhoneClient,
+  validateWebsiteClient,
+  websiteValidationMessage,
+} from '../utils/profileFields';
 import DeleteProfileModal from './modals/DeleteProfileModal';
+import Alert from './common/Alert';
 import '../../css/app.css';
+
+/** Согласовано с App\Rules\PersonNameLetters */
+const PERSON_NAME_LETTERS_RE = /^[\p{L}]+(?:[ \u0027\u2019\-][\p{L}]+)*$/u;
 
 function Settings() {
   const navigate = useNavigate();
   const { user, isAuthenticated, refreshUserFromServer, logout } = useAuth();
+  const toast = useToast().toast;
   const [form, setForm] = useState({
     name: '',
     user_surname: '',
     username: '',
     email: '',
+    email_notifications_enabled: true,
     country: '',
     website: '',
     bio: '',
@@ -27,15 +45,26 @@ function Settings() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Форма смены пароля
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: '',
+    password: '',
+    password_confirmation: '',
+  });
+  const [passwordErrors, setPasswordErrors] = useState({});
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/');
       return;
     }
-    // preload from current user; for profile fields request profile endpoint
+    // Для настроек используем только приватный endpoint текущего пользователя.
     (async () => {
       try {
-        const res = await fetch(`/api/profiles/${user.id}`, { headers: { 'Accept': 'application/json' } });
+        const res = await apiFetch('/api/profile', { headers: { 'Accept': 'application/json' } });
         if (res.ok) {
           const data = await res.json();
           const next = {
@@ -43,17 +72,23 @@ function Settings() {
             user_surname: data.user_surname || '',
             username: data.username || '',
             email: data.email || '',
+            email_notifications_enabled:
+              typeof data.email_notifications_enabled === 'boolean'
+                ? data.email_notifications_enabled
+                : true,
             country: data.country || '',
             website: data.website || '',
             bio: data.bio || '',
-            phone: data.phone || '',
+            phone: data.phone ? formatPhoneMask(data.phone) : '',
             avatar: data.avatar || '',
           };
           setForm(next);
           setAvatarPreview(next.avatar);
         }
       } catch (e) {
-        setError('Не удалось загрузить данные профиля');
+        const msg = 'Не удалось загрузить данные профиля';
+        setError(msg);
+        toast.error(msg);
       }
     })();
   }, [isAuthenticated, navigate, user]);
@@ -63,21 +98,9 @@ function Settings() {
     return re.test(email);
   };
 
-  const validatePhone = (phone) => {
-    // Поддержка форматов: +7..., 8..., без символов кроме цифр, пробелов, +, -, ()
-    const re = /^[\+]?[(]?[0-9]{1,4}[)]?[-\s\.]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{1,9}$/;
-    return !phone || re.test(phone.replace(/\s/g, ''));
-  };
+  const validatePhone = (phone) => validatePhoneClient(phone);
 
-  const validateWebsite = (website) => {
-    if (!website) return true;
-    try {
-      new URL(website);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const validateWebsite = (website) => validateWebsiteClient(website);
 
   const updateField = (field, value) => {
     setError('');
@@ -90,13 +113,25 @@ function Settings() {
       setFieldErrors(prev => ({ ...prev, email: 'Некорректный формат email' }));
     }
     if (field === 'phone' && value && !validatePhone(value)) {
-      setFieldErrors(prev => ({ ...prev, phone: 'Некорректный формат телефона' }));
+      setFieldErrors(prev => ({ ...prev, phone: phoneValidationMessage() }));
     }
     if (field === 'website' && value && !validateWebsite(value)) {
-      setFieldErrors(prev => ({ ...prev, website: 'Некорректный URL (должен начинаться с http:// или https://)' }));
+      setFieldErrors(prev => ({ ...prev, website: websiteValidationMessage() }));
     }
     if (field === 'username' && value && value.length < 3) {
       setFieldErrors(prev => ({ ...prev, username: 'Никнейм должен содержать минимум 3 символа' }));
+    }
+    if (field === 'name' && value && value.trim() && !PERSON_NAME_LETTERS_RE.test(value.trim())) {
+      setFieldErrors(prev => ({
+        ...prev,
+        name: 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Jean-Pierre)',
+      }));
+    }
+    if (field === 'user_surname' && value && value.trim() && !PERSON_NAME_LETTERS_RE.test(value.trim())) {
+      setFieldErrors(prev => ({
+        ...prev,
+        user_surname: "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Van der Berg, O'Brien)",
+      }));
     }
   };
 
@@ -121,45 +156,52 @@ function Settings() {
       errors.email = 'Некорректный формат email';
     }
     if (form.phone && !validatePhone(form.phone)) {
-      errors.phone = 'Некорректный формат телефона';
+      errors.phone = phoneValidationMessage();
     }
     if (form.website && !validateWebsite(form.website)) {
-      errors.website = 'Некорректный URL';
+      errors.website = websiteValidationMessage();
     }
     if (form.username && form.username.length < 3) {
       errors.username = 'Никнейм должен содержать минимум 3 символа';
     }
     if (!form.name || form.name.trim() === '') {
       errors.name = 'Имя обязательно для заполнения';
+    } else if (!PERSON_NAME_LETTERS_RE.test(form.name.trim())) {
+      errors.name = 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Jean-Pierre)';
+    }
+
+    if (form.user_surname && form.user_surname.trim() !== '' && !PERSON_NAME_LETTERS_RE.test(form.user_surname.trim())) {
+      errors.user_surname = "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Van der Berg, O'Brien)";
     }
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      setError('Пожалуйста, исправьте ошибки в форме');
+      const msg = 'Пожалуйста, исправьте ошибки в форме';
+      setError(msg);
+      toast.error(msg);
       return;
     }
 
     try {
       setIsSaving(true);
-      const token = localStorage.getItem('token');
       
       // Создаем объект с данными
       const data = {
         country: form.country || '',
-        website: form.website || '',
+        website: form.website ? normalizeWebsiteUrl(form.website) : '',
         bio: form.bio || '',
         name: form.name || '',
         user_surname: form.user_surname || '',
         username: form.username || '',
         email: form.email || '',
-        phone: form.phone || '',
+        phone: form.phone ? normalizePhoneStorage(form.phone) : '',
+        email_notifications_enabled: !!form.email_notifications_enabled,
       };
   
       // Обновляем основные данные профиля
-      const res = await fetch('/api/profile', {
+      const res = await apiFetch('/api/profile', {
         method: 'PUT',
         headers: { 
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
@@ -172,11 +214,23 @@ function Settings() {
         try {
           const errorData = JSON.parse(errorText);
           errorMessage = errorData.message || errorMessage;
+          if (res.status === 422 && errorData.errors && typeof errorData.errors === 'object') {
+            const flat = {};
+            Object.keys(errorData.errors).forEach(key => {
+              const v = errorData.errors[key];
+              flat[key] = Array.isArray(v) ? v[0] : v;
+            });
+            setFieldErrors(flat);
+          }
         } catch (e) {
           // ignore
         }
-        throw new Error(errorMessage);
+        setError(errorMessage);
+        toast.error(errorMessage);
+        setIsSaving(false);
+        return;
       }
+      setFieldErrors({});
       
       const result = await res.json();
       
@@ -185,40 +239,44 @@ function Settings() {
         const avatarFormData = new FormData();
         avatarFormData.append('avatar', form.avatar_file);
         
-        const avatarRes = await fetch('/api/profile/avatar', {
+        const avatarRes = await apiFetch('/api/profile/avatar', {
           method: 'POST',
           headers: { 
-            'Authorization': `Bearer ${token}`,
             'Accept': 'application/json',
           },
           body: avatarFormData
         });
         
         if (!avatarRes.ok) {
-          setError('Профиль обновлён, но не удалось загрузить аватар');
+          const msg = 'Профиль обновлён, но не удалось загрузить аватар';
+          setError(msg);
+          toast.error(msg);
           return;
         }
       }
       
-      setSuccess('Изменения успешно сохранены');
+      const successMsg = 'Изменения успешно сохранены';
+      setSuccess(successMsg);
+      toast.success(successMsg);
       await refreshUserFromServer();
       
     } catch (e) {
-      setError(e.message || 'Ошибка сохранения');
+      const msg = e.message || 'Ошибка сохранения';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsSaving(false);
     }
   };
   
   // Отдельная функция для обновления аватара
-  const updateAvatarSeparately = async (file, token) => {
+  const updateAvatarSeparately = async (file) => {
     const avatarFormData = new FormData();
     avatarFormData.append('avatar', file);
     
-    const res = await fetch('/api/profile/avatar', {
+    const res = await apiFetch('/api/profile/avatar', {
       method: 'POST',
       headers: { 
-        'Authorization': `Bearer ${token}`,
         'Accept': 'application/json',
       },
       body: avatarFormData
@@ -229,17 +287,89 @@ function Settings() {
     }
   };
 
+  const updatePasswordField = (field, value) => {
+    setPasswordMessage('');
+    setPasswordErrors(prev => ({ ...prev, [field]: '' }));
+    setPasswordForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPasswordMessage('');
+    setPasswordErrors({});
+
+    const errors = {};
+    if (!passwordForm.current_password.trim()) {
+      errors.current_password = 'Введите текущий пароль';
+    }
+    if (!passwordForm.password) {
+      errors.password = 'Введите новый пароль';
+    } else if (passwordForm.password.length < 8) {
+      errors.password = 'Новый пароль должен содержать минимум 8 символов';
+    }
+    if (passwordForm.password !== passwordForm.password_confirmation) {
+      errors.password_confirmation = 'Пароли не совпадают';
+    }
+    if (Object.keys(errors).length > 0) {
+      setPasswordErrors(errors);
+      return;
+    }
+
+    try {
+      setIsChangingPassword(true);
+      const res = await apiFetch('/api/user/update-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          current_password: passwordForm.current_password,
+          password: passwordForm.password,
+          password_confirmation: passwordForm.password_confirmation,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        if (res.status === 422 && data.errors && typeof data.errors === 'object') {
+          const flat = {};
+          Object.keys(data.errors).forEach(key => {
+            const v = data.errors[key];
+            flat[key] = Array.isArray(v) ? v[0] : v;
+          });
+          setPasswordErrors(flat);
+          setPasswordMessage(data.message || 'Ошибка валидации');
+        } else {
+          setPasswordMessage(data.message || 'Не удалось изменить пароль');
+        }
+        return;
+      }
+
+      setPasswordMessage('Пароль успешно изменён');
+      setPasswordForm({ current_password: '', password: '', password_confirmation: '' });
+      setPasswordErrors({});
+      setTimeout(() => {
+        setShowPasswordForm(false);
+        setPasswordMessage('');
+      }, 2000);
+    } catch (e) {
+      setPasswordMessage('Ошибка соединения с сервером');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
   // Функция удаления профиля
   const handleDeleteProfile = async () => {
     try {
       setIsDeleting(true);
       setError('');
       
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/profile', {
+      const res = await apiFetch('/api/profile', {
         method: 'DELETE',
         headers: { 
-          'Authorization': `Bearer ${token}`,
           'Accept': 'application/json',
         },
       });
@@ -261,7 +391,9 @@ function Settings() {
       navigate('/');
       
     } catch (e) {
-      setError(e.message || 'Ошибка удаления профиля');
+      const msg = e.message || 'Ошибка удаления профиля';
+      setError(msg);
+      toast.error(msg);
       setIsDeleting(false);
       setShowDeleteConfirm(false);
     }
@@ -270,19 +402,19 @@ function Settings() {
   return (
     <div className="main-content">
       <div style={{ marginBottom: '2rem' }}>
-        <button onClick={() => navigate(-1)} className="btn btn-secondary">Назад</button>
+        <button onClick={() => navigate(-1)} className="btn btn-outline">Назад</button>
       </div>
 
       <div style={{ maxWidth: '720px', margin: '0 auto' }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#111827', marginBottom: '1rem', fontFamily: 'JetBrains Mono, monospace' }}>Настройки профиля</h1>
-        {error && <div style={{ color: '#7B0000', background: '#f5f5f5', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontFamily: 'JetBrains Mono, monospace' }}>{error}</div>}
-        {success && <div style={{ color: '#065f46', background: '#ecfdf5', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontFamily: 'JetBrains Mono, monospace' }}>{success}</div>}
+        <Alert type="error" message={error} className="home-alert" />
+        <Alert type="success" message={success} className="home-alert" />
 
-        <div style={{ background: '#DEDDD8', borderRadius: '12px', padding: '1.5rem', border: '1px solid #D4D1CC', display: 'grid', gap: '1rem' }}>
+        <div className="settings-form-card" style={{ background: '#DEDDD8', borderRadius: '12px', padding: '1.5rem', border: '1px solid #D4D1CC', display: 'grid', gap: '1rem' }}>
           <div>
             <label className="form-label">Аватар</label>
-            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-              <img src={avatarPreview || '/default-avatar.svg'} alt="avatar" style={{ width: 64, height: 64, borderRadius: '50%', border: '2px solid #e5e7eb' }} />
+            <div className="settings-avatar-row" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+              <img src={avatarPreview || '/default-avatar.svg'} alt="avatar" className="settings-avatar-preview" />
               <input type="file" accept="image/*" onChange={onAvatarFileChange} />
             </div>
           </div>
@@ -323,13 +455,27 @@ function Settings() {
             {fieldErrors.email && <div className="form-error">{fieldErrors.email}</div>}
           </div>
           <div>
+            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={!!form.email_notifications_enabled}
+                onChange={(e) => updateField('email_notifications_enabled', e.target.checked)}
+              />
+              Уведомления по email включены
+            </label>
+          </div>
+          <div>
             <label className="form-label">Телефон</label>
             <input 
               className="form-input" 
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
               value={form.phone} 
-              onChange={e => updateField('phone', e.target.value)}
+              onChange={e => updateField('phone', formatPhoneMask(e.target.value))}
               placeholder="+7 (900) 123-45-67"
             />
+            <div className="ui-form-help">{phoneInputHint()}</div>
             {fieldErrors.phone && <div className="form-error">{fieldErrors.phone}</div>}
           </div>
           <div>
@@ -341,8 +487,14 @@ function Settings() {
             <input 
               className="form-input" 
               value={form.website} 
-              onChange={e => updateField('website', e.target.value)} 
-              placeholder="https://example.com"
+              onChange={e => updateField('website', e.target.value)}
+              onBlur={e => {
+                const v = e.target.value.trim();
+                if (v && validateWebsite(v)) {
+                  updateField('website', normalizeWebsiteUrl(v));
+                }
+              }}
+              placeholder="example.com"
             />
             {fieldErrors.website && <div className="form-error">{fieldErrors.website}</div>}
           </div>
@@ -351,19 +503,120 @@ function Settings() {
             <textarea className="form-input" rows={5} value={form.bio} onChange={e => updateField('bio', e.target.value)} />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '1.5rem', borderTop: '1px solid #7B0000' }}>
+          {/* Кнопка и форма смены пароля */}
+          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #D4D1CC' }}>
+            {!showPasswordForm ? (
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  setShowPasswordForm(true);
+                  setPasswordForm({ current_password: '', password: '', password_confirmation: '' });
+                  setPasswordErrors({});
+                  setPasswordMessage('');
+                }}
+                style={{ fontFamily: 'JetBrains Mono, monospace' }}
+              >
+                Изменить пароль
+              </button>
+            ) : (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div style={{ fontWeight: '600', color: '#111827', fontFamily: 'JetBrains Mono, monospace' }}>Смена пароля</div>
+                {passwordMessage && (
+                  <div
+                    style={{
+                      padding: '0.75rem',
+                      borderRadius: '8px',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      backgroundColor: passwordMessage.includes('успешно') ? 'rgba(123, 0, 0, 0.08)' : '#f5f5f5',
+                      color: '#7B0000',
+                    }}
+                  >
+                    {passwordMessage}
+                  </div>
+                )}
+                <form onSubmit={handleChangePassword}>
+                  <div>
+                    <label className="form-label">Текущий пароль</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      value={passwordForm.current_password}
+                      onChange={e => updatePasswordField('current_password', e.target.value)}
+                      placeholder="Введите текущий пароль для подтверждения"
+                      autoComplete="current-password"
+                    />
+                    {passwordErrors.current_password && (
+                      <div className="form-error">
+                        {Array.isArray(passwordErrors.current_password) ? passwordErrors.current_password[0] : passwordErrors.current_password}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="form-label">Новый пароль</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      value={passwordForm.password}
+                      onChange={e => updatePasswordField('password', e.target.value)}
+                      placeholder="Минимум 8 символов"
+                      autoComplete="new-password"
+                    />
+                    {passwordErrors.password && (
+                      <div className="form-error">
+                        {Array.isArray(passwordErrors.password) ? passwordErrors.password[0] : passwordErrors.password}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="form-label">Подтверждение пароля</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      value={passwordForm.password_confirmation}
+                      onChange={e => updatePasswordField('password_confirmation', e.target.value)}
+                      placeholder="Повторите новый пароль"
+                      autoComplete="new-password"
+                    />
+                    {passwordErrors.password_confirmation && (
+                      <div className="form-error">
+                        {Array.isArray(passwordErrors.password_confirmation) ? passwordErrors.password_confirmation[0] : passwordErrors.password_confirmation}
+                      </div>
+                    )}
+                  </div>
+                  <div className="settings-password-actions" style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={isChangingPassword}
+                      style={{ fontFamily: 'JetBrains Mono, monospace' }}
+                    >
+                      {isChangingPassword ? 'Сохранение...' : 'Изменить пароль'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => {
+                        setShowPasswordForm(false);
+                        setPasswordForm({ current_password: '', password: '', password_confirmation: '' });
+                        setPasswordErrors({});
+                        setPasswordMessage('');
+                      }}
+                      disabled={isChangingPassword}
+                      style={{ fontFamily: 'JetBrains Mono, monospace' }}
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+
+          <div className="settings-danger-actions" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '1.5rem', borderTop: '1px solid #7B0000' }}>
             <button 
-              className="btn" 
-              style={{ 
-                background: '#7B0000', 
-                color: 'white',
-                border: 'none',
-                padding: '0.5rem 1rem',
-                borderRadius: '8px',
-                cursor: isDeleting ? 'not-allowed' : 'pointer',
-                opacity: isDeleting ? 0.6 : 1,
-                fontFamily: 'JetBrains Mono, monospace'
-              }}
+              className="btn btn-danger"
+              style={{ opacity: isDeleting ? 0.6 : 1 }}
               disabled={isDeleting}
               onClick={() => setShowDeleteConfirm(true)}
             >

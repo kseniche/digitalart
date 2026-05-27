@@ -2,9 +2,11 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
@@ -28,6 +30,16 @@ class Post extends Model
         'media_type',
         'like_count',
         'comment_count',
+        'view_count',
+        'category_id',
+        'is_draft',
+        'published_at',
+        'moderation_status',
+        'approved_at',
+        'moderation_rejection_reason',
+        'auto_moderation_passed',
+        'auto_moderation_reason',
+        'auto_moderation_checked_at',
     ];
 
     protected $appends = [
@@ -38,6 +50,11 @@ class Post extends Model
 
     protected $casts = [
         'tags' => 'array',
+        'is_draft' => 'boolean',
+        'published_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'auto_moderation_passed' => 'boolean',
+        'auto_moderation_checked_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -46,6 +63,11 @@ class Post extends Model
     public function author(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id', 'id');
+    }
+
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(Category::class, 'category_id', 'id');
     }
 
     public function comments(): HasMany
@@ -58,6 +80,12 @@ class Post extends Model
         return $this->hasMany(Like::class, 'post_id', 'id');
     }
 
+    /** Пользователи, добавившие пост в избранное (критерий 3.8). */
+    public function favoredBy(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'favorites')->withTimestamps();
+    }
+
     /**
      * Accessor для image_url (оригинальное изображение)
      * С кэшированием на 1 час для производительности
@@ -65,7 +93,7 @@ class Post extends Model
     public function getImageUrlAttribute(): ?string
     {
         if (empty($this->media_path)) {
-            return '/images/digital-art-1.svg'; // Fallback изображение
+            return '/images/digital-art-1.jpg'; // Fallback изображение
         }
 
         // Кэшируем URL на 1 час для избежания повторных вычислений
@@ -81,7 +109,7 @@ class Post extends Model
     public function getOptimizedImageUrlAttribute(): ?string
     {
         if (empty($this->media_path)) {
-            return '/images/digital-art-1.svg';
+            return '/images/digital-art-1.jpg';
         }
 
         return Cache::remember("post_optimized_image_url_{$this->id}", 3600, function () {
@@ -96,7 +124,7 @@ class Post extends Model
     public function getThumbnailUrlAttribute(): ?string
     {
         if (empty($this->media_path)) {
-            return '/images/placeholder.svg'; // Маленький placeholder
+            return '/images/digital-art-1.jpg'; // Маленький placeholder
         }
 
         return Cache::remember("post_thumbnail_url_{$this->id}", 3600, function () {
@@ -121,6 +149,19 @@ class Post extends Model
         }
     
         try {
+            if (Storage::disk('public')->exists($path)) {
+                return Storage::disk('public')->url($path);
+            }
+
+            $basename = basename($path);
+            $localImagesPath = 'images/' . $basename;
+            if (Storage::disk('public')->exists($localImagesPath)) {
+                return Storage::disk('public')->url($localImagesPath);
+            }
+            if (is_file(public_path('images/' . $basename))) {
+                return '/images/' . $basename;
+            }
+
             // 1. Используем публичный домен из .env 
             $publicBaseUrl = env('AWS_PUBLIC_URL');
             if ($publicBaseUrl) {
@@ -131,7 +172,7 @@ class Post extends Model
             $s3Config = config('filesystems.disks.s3');
             if (empty($s3Config)) {
                 \Log::warning('S3 configuration not found', ['path' => $path]);
-                return Storage::disk('public')->url($path) ?? '/images/digital-art-1.svg';
+                return Storage::disk('public')->url($path) ?? '/images/digital-art-1.jpg';
             }
     
             $baseUrl = $s3Config['url'] ?? ($s3Config['endpoint'] . '/' . $s3Config['bucket']);
@@ -147,7 +188,7 @@ class Post extends Model
             ]);
             
             // Fallback на локальное хранилище
-            return Storage::disk('public')->url($path) ?? '/images/digital-art-1.svg';
+            return Storage::disk('public')->url($path) ?? '/images/digital-art-1.jpg';
         }
     }
 
@@ -170,6 +211,40 @@ class Post extends Model
         } else {
             $this->attributes['media_path'] = $value;
         }
+    }
+
+    /**
+     * Посты, видимые в ленте; те же условия — для лайка/избранного (добавление).
+     * Согласовано с FeedController::index.
+     */
+    public function scopePubliclyVisible(Builder $query): Builder
+    {
+        return $query
+            ->where('is_draft', false)
+            ->where('moderation_status', 'approved')
+            ->where(function ($q) {
+                $q->whereNull('published_at')->orWhere('published_at', '<=', now());
+            })
+            ->whereHas('author', fn ($q) => $q->whereNull('users.deleted_at'));
+    }
+
+    /**
+     * Доступен ли пост для публичных социальных действий (как в ленте).
+     */
+    public function isPubliclyVisible(): bool
+    {
+        if ($this->is_draft) {
+            return false;
+        }
+        if (($this->moderation_status ?? '') !== 'approved') {
+            return false;
+        }
+        if ($this->published_at && $this->published_at->isFuture()) {
+            return false;
+        }
+        $this->loadMissing('author');
+
+        return $this->author !== null;
     }
 
     /**

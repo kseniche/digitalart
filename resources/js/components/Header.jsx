@@ -35,27 +35,30 @@ function Header() {
     <header className="header">
       <div className="header-content">
         <Link to="/" className="logo">
-          Цифровое искусство
+          <img
+            src="/images/logo.png"
+            alt=""
+            className="logo-img"
+            width={40}
+            height={40}
+            decoding="async"
+          />
+          <span className="logo-text">Цифровое искусство</span>
         </Link>
         
         <div className="nav-buttons">
           {user ? (
             <div className="user-menu">
-              <div className="user-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="user-info user-info-inline">
                 {/* Показываем бейдж администратора */}
                 {isAdmin && (
-                  <span 
-                    style={{
-                      background: '#10b981',
-                      color: 'white',
-                      padding: '2px 8px',
-                      borderRadius: '12px',
-                      fontSize: '12px',
-                      fontWeight: 'bold'
-                    }}
-                    title="Администратор"
-                  >
+                  <span className="user-role-badge" title="Администратор">
                     ADMIN
+                  </span>
+                )}
+                {user.is_banned && (
+                  <span className="user-role-badge" title="Заблокирован">
+                    БАН
                   </span>
                 )}
                 <img
@@ -63,7 +66,6 @@ function Header() {
                   alt="Аватар"
                   className="user-avatar"
                   onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  style={{ cursor: 'pointer' }}
                   onError={(e) => {
                     e.target.src = '/default-avatar.svg';
                   }}

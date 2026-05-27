@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Follower;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class FollowController extends Controller
@@ -19,30 +20,31 @@ class FollowController extends Controller
         }
 
         try {
-            // Проверяем существование подписки с учетом мягко удаленных записей
-            $existing = Follower::withTrashed()
-                ->where('follower_id', $authId)
-                ->where('following_id', $user->id)
-                ->first();
+            $following = DB::transaction(function () use ($authId, $user) {
+                $existing = Follower::withTrashed()
+                    ->where('follower_id', $authId)
+                    ->where('following_id', $user->id)
+                    ->lockForUpdate()
+                    ->first();
 
-            if ($existing) {
-                if ($existing->trashed()) {
-                    // Подписка была удалена - восстанавливаем ее
-                    $existing->restore();
-                    return response()->json(['following' => true]);
-                } else {
-                    // Подписка активна - удаляем ее
+                if ($existing) {
+                    if ($existing->trashed()) {
+                        $existing->restore();
+                        return true;
+                    }
+
                     $existing->delete();
-                    return response()->json(['following' => false]);
+                    return false;
                 }
-            } else {
-                // Подписки не существует - создаем новую
+
                 Follower::create([
                     'follower_id' => $authId,
                     'following_id' => $user->id,
                 ]);
-                return response()->json(['following' => true]);
-            }
+                return true;
+            });
+
+            return response()->json(['following' => $following]);
         } catch (\Throwable $e) {
             Log::error('Ошибка при подписке/отписке', [
                 'auth_id' => $authId,
@@ -54,16 +56,77 @@ class FollowController extends Controller
         }
     }
     
-public function check(Request $request, User $user)
-{
-    // Проверяем только активные подписки (без мягко удаленных)
-    $isFollowing = Follower::where('follower_id', $request->user()->id)
-        ->where('following_id', $user->id)
-        ->whereNull('deleted_at')
-        ->exists();
+    public function check(Request $request, User $user)
+    {
+        $isFollowing = Follower::where('follower_id', $request->user()->id)
+            ->where('following_id', $user->id)
+            ->whereNull('deleted_at')
+            ->exists();
 
-    return response()->json(['following' => $isFollowing]);
-}
+        return response()->json(['following' => $isFollowing]);
+    }
+
+    /**
+     * Список подписчиков пользователя (кто подписан на него).
+     * GET /api/users/{user}/followers
+     */
+    public function followers(Request $request, User $user)
+    {
+        $authUser = $request->user();
+        $rows = Follower::where('following_id', $user->id)
+            ->whereNull('followers.deleted_at')
+            ->with('follower:id,name,user_surname,username,avatar')
+            ->get();
+
+        $list = $rows->map(function ($row) use ($authUser) {
+            $u = $row->follower;
+            if (!$u) return null;
+            $u->setAttribute('avatar_url', $u->avatar_url ?? null);
+            $isFollowing = $authUser && $authUser->id !== $u->id
+                ? Follower::where('follower_id', $authUser->id)->where('following_id', $u->id)->whereNull('deleted_at')->exists()
+                : false;
+            return [
+                'id' => $u->id,
+                'name' => trim($u->name . ' ' . ($u->user_surname ?? '')),
+                'username' => $u->username,
+                'avatar' => $u->avatar_url ?? $u->avatar,
+                'is_following' => $isFollowing,
+            ];
+        })->filter()->values();
+
+        return response()->json($list);
+    }
+
+    /**
+     * Список подписок пользователя (на кого он подписан).
+     * GET /api/users/{user}/following
+     */
+    public function following(Request $request, User $user)
+    {
+        $authUser = $request->user();
+        $rows = Follower::where('follower_id', $user->id)
+            ->whereNull('followers.deleted_at')
+            ->with('following:id,name,user_surname,username,avatar')
+            ->get();
+
+        $list = $rows->map(function ($row) use ($authUser) {
+            $u = $row->following;
+            if (!$u) return null;
+            $u->setAttribute('avatar_url', $u->avatar_url ?? null);
+            $isFollowing = $authUser && $authUser->id !== $u->id
+                ? Follower::where('follower_id', $authUser->id)->where('following_id', $u->id)->whereNull('deleted_at')->exists()
+                : false;
+            return [
+                'id' => $u->id,
+                'name' => trim($u->name . ' ' . ($u->user_surname ?? '')),
+                'username' => $u->username,
+                'avatar' => $u->avatar_url ?? $u->avatar,
+                'is_following' => $isFollowing,
+            ];
+        })->filter()->values();
+
+        return response()->json($list);
+    }
 }
 
 
