@@ -17,6 +17,13 @@ class CommentController extends Controller
 
     public function store(Request $request, Post $post)
     {
+        if (! $request->user()->comment_rules_accepted_at) {
+            return response()->json([
+                'message' => 'Перед отправкой комментариев необходимо принять правила сообщества',
+                'code' => 'comment_rules_not_accepted',
+            ], 403);
+        }
+
         $data = $request->validate([
             'content' => ['required', 'string', 'max:2000'],
         ], [
@@ -133,7 +140,7 @@ class CommentController extends Controller
             return response()->json(['message' => 'Комментарий не найден'], 404);
         }
 
-        if (($comment->moderation_status ?? '') !== 'approved') {
+        if (($comment->moderation_status ?? '') !== 'approved' || $comment->is_hidden) {
             return response()->json(['message' => 'Комментарий недоступен'], 404);
         }
 

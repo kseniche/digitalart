@@ -94,6 +94,10 @@ function AdminCategories() {
   };
 
   const startEdit = (category) => {
+    if ((category.posts_count || 0) > 0) {
+      toast.error('Нельзя изменить категорию: в ней есть публикации');
+      return;
+    }
     setEditingId(category.id);
     setEditName(category.name);
   };
@@ -265,7 +269,9 @@ function AdminCategories() {
                       <button
                         type="button"
                         className="admin-btn admin-btn-outline admin-btn-sm"
+                        disabled={(cat.posts_count || 0) > 0}
                         onClick={() => startEdit(cat)}
+                        title={(cat.posts_count || 0) > 0 ? 'Нельзя изменить категорию, пока в ней есть публикации' : 'Изменить категорию'}
                       >
                         Изменить
                       </button>

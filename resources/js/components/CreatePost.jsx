@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useGoBack } from '../hooks/useGoBack';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { apiFetch } from '../api';
@@ -52,6 +53,8 @@ function mapApiValidationErrors(apiErrors) {
 
 function CreatePost() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const goBack = useGoBack('/');
   const { isAuthenticated, user } = useAuth();
   const toast = useToast().toast;
   const submitAsDraftRef = useRef(false);
@@ -69,7 +72,6 @@ function CreatePost() {
   const [isLoading, setIsLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [mediaType, setMediaType] = useState('image');
-
   useEffect(() => {
     apiFetch('/api/categories')
       .then((r) => r.ok ? r.json() : [])
@@ -106,7 +108,7 @@ function CreatePost() {
       if (file.size > MAX_MEDIA_SIZE_BYTES) {
         setErrors(prev => ({
           ...prev,
-          image: `Размер файла не должен превышать ${MAX_MEDIA_SIZE_MB}MB`
+          image: `Размер файла не должен превышать ${MAX_MEDIA_SIZE_MB} МБ`
         }));
         return;
       }
@@ -234,7 +236,7 @@ function CreatePost() {
         navigate(`/profile/${user.id}`, { replace: true });
       } else if (result.id || result.post?.id) {
         const postId = result.id || result.post.id;
-        navigate(`/post/${postId}`);
+        navigate(`/post/${postId}`, { state: { from: `${location.pathname}${location.search}` } });
       } else {
         navigate('/');
       }
@@ -259,10 +261,12 @@ function CreatePost() {
     <div className="main-content">
       <div style={{ marginBottom: '2rem' }}>
         <button
-          onClick={() => navigate('/')}
+          onClick={goBack}
           className="ui-page-back"
+          type="button"
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
         >
-          ← Назад к ленте
+          ← Назад
         </button>
       </div>
 
@@ -345,7 +349,7 @@ function CreatePost() {
                     fontSize: '0.875rem',
                     color: '#6b7280'
                   }}>
-                    Файл: {formData.image.name} ({(formData.image.size / 1024 / 1024).toFixed(2)} MB)
+                    Файл: {formData.image.name} ({(formData.image.size / 1024 / 1024).toFixed(2)} МБ)
                   </div>
                 )}
               </div>
@@ -360,7 +364,7 @@ function CreatePost() {
                   </div>
                   <div style={{ color: '#6b7280', fontSize: '0.875rem', textAlign: 'center', fontFamily: 'JetBrains Mono, monospace' }}>
                     Нажмите для выбора файла<br />
-                    JPEG, PNG, GIF, WebP, MP4, WebM, MOV до 50MB
+                    JPEG, PNG, GIF, WebP, MP4, WebM, MOV до 50 МБ
                   </div>
                 </div>
               </div>
@@ -371,6 +375,14 @@ function CreatePost() {
                 {errors.image}
               </div>
             )}
+            <p style={{ marginTop: '0.75rem', textAlign: 'center', fontSize: '0.8125rem' }}>
+              <Link
+                to="/community-rules#publication-rules"
+                style={{ color: '#6b7280', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+              >
+                Правила публикации
+              </Link>
+            </p>
           </div>
         </div>
 

@@ -32,9 +32,9 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
     const newErrors = {};
 
     if (!formData.email) {
-      newErrors.email = 'Email обязателен';
+      newErrors.email = 'Укажите электронную почту';
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email неверного формата';
+      newErrors.email = 'Некорректный формат электронной почты';
     }
 
     if (!formData.password) {
@@ -89,7 +89,7 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label htmlFor="email" className="form-label">
-              Email
+              Электронная почта
             </label>
             <input
               type="email"
@@ -98,7 +98,7 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
               value={formData.email}
               onChange={handleChange}
               className="form-input"
-              placeholder="Введите ваш email"
+              placeholder="Введите электронную почту"
             />
             {errors.email && <div className="form-error">{errors.email}</div>}
           </div>

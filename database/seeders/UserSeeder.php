@@ -27,7 +27,9 @@ class UserSeeder extends Seeder
             'email' => 'admin@digital-art.ru',
             'password' => Hash::make('password123'),
             'email_verified_at' => now(),
-            'avatar' => '/default-avatar.svg'
+            'avatar' => '/default-avatar.svg',
+            'terms_accepted_at' => now(),
+            'comment_rules_accepted_at' => now(),
         ]);
         
         // НАЗНАЧАЕМ РОЛЬ АДМИНИСТРАТОРА
@@ -41,6 +43,8 @@ class UserSeeder extends Seeder
             'password' => Hash::make('password123'),
             'email_verified_at' => now(),
             'avatar' => '/default-avatar.svg',
+            'terms_accepted_at' => now(),
+            'comment_rules_accepted_at' => now(),
         ]);
         $testUser->assignRole('user');
 
@@ -53,6 +57,8 @@ class UserSeeder extends Seeder
             'password' => Hash::make('password123'),
             'email_verified_at' => now(),
             'avatar' => '/default-avatar.svg',
+            'terms_accepted_at' => now(),
+            'comment_rules_accepted_at' => now(),
         ]);
         $annaUser->assignRole('user');
 
@@ -64,6 +70,8 @@ class UserSeeder extends Seeder
             'password' => Hash::make('password123'),
             'email_verified_at' => now(),
             'avatar' => '/default-avatar.svg',
+            'terms_accepted_at' => now(),
+            'comment_rules_accepted_at' => now(),
         ]);
         $mikeUser->assignRole('user');
     }

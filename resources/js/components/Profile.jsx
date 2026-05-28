@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useGoBack } from '../hooks/useGoBack';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { apiFetch } from '../api';
@@ -13,6 +14,7 @@ import '../../css/app.css';
 function Profile() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const goBack = useGoBack('/');
   const { user, isAuthenticated } = useAuth();
   const toast = useToast().toast;
   const [profile, setProfile] = useState(null);
@@ -363,9 +365,9 @@ function Profile() {
   return (
     <div className="main-content">
       <div style={{ marginBottom: '1.5rem' }}>
-        <Link to="/" className="ui-page-back">
-          ← Назад к ленте
-        </Link>
+        <button type="button" onClick={goBack} className="ui-page-back" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+          ← Назад
+        </button>
       </div>
 
       {/* Сообщение об ошибке */}

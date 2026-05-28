@@ -22,6 +22,7 @@ const defaultState = {
   perPage: FEED_DEFAULT_PER_PAGE,
   currentPage: 1,
   filtersPanelOpen: false,
+  followingOnly: false,
 };
 
 const FeedFiltersContext = createContext(null);
@@ -45,6 +46,7 @@ export function FeedFiltersProvider({ children }) {
   const [perPage, setPerPage] = useState(defaultState.perPage);
   const [currentPage, setCurrentPage] = useState(defaultState.currentPage);
   const [filtersPanelOpen, setFiltersPanelOpen] = useState(defaultState.filtersPanelOpen);
+  const [followingOnly, setFollowingOnly] = useState(defaultState.followingOnly);
 
   const scrollRestoreRef = useRef(null);
 
@@ -69,6 +71,7 @@ export function FeedFiltersProvider({ children }) {
     setPerPage(defaultState.perPage);
     setCurrentPage(defaultState.currentPage);
     setFiltersPanelOpen(defaultState.filtersPanelOpen);
+    setFollowingOnly(defaultState.followingOnly);
     scrollRestoreRef.current = null;
   }, []);
 
@@ -94,6 +97,8 @@ export function FeedFiltersProvider({ children }) {
       setCurrentPage,
       filtersPanelOpen,
       setFiltersPanelOpen,
+      followingOnly,
+      setFollowingOnly,
       saveScrollPosition,
       consumeScrollRestore,
       resetAllFilters,
@@ -109,6 +114,7 @@ export function FeedFiltersProvider({ children }) {
       perPage,
       currentPage,
       filtersPanelOpen,
+      followingOnly,
       saveScrollPosition,
       consumeScrollRestore,
       resetAllFilters,

@@ -157,6 +157,27 @@ export const AuthProvider = ({ children }) => {
     }
   }, [refreshUserFromServer]);
 
+  const acceptCommentRules = useCallback(async () => {
+    try {
+      const response = await apiFetch('/api/user/accept-comment-rules', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        return { success: false, error: data.message || 'Не удалось сохранить согласие' };
+      }
+
+      await refreshUserFromServer();
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Ошибка соединения с сервером' };
+    }
+  }, [refreshUserFromServer]);
+
   const logout = useCallback(async () => {
     try {
       await apiFetch('/api/logout', {
@@ -189,7 +210,8 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated: !!user,
     isAdmin,
     refreshUserFromServer,
-  }), [user, isLoading, login, register, logout, isAdmin, refreshUserFromServer]);
+    acceptCommentRules,
+  }), [user, isLoading, login, register, logout, isAdmin, refreshUserFromServer, acceptCommentRules]);
 
   return (
     <AuthContext.Provider value={value}>

@@ -1,13 +1,16 @@
 import React, { memo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { getReturnState } from '../utils/navigation';
 import MediaPreview from './common/MediaPreview';
 import { useMasonryRelayout } from './common/MasonryGrid';
 
 function ProfilePostCard({ post, profileTab, moderationFilter, onImageError }) {
+  const location = useLocation();
+  const linkState = getReturnState(location);
   const scheduleRelayout = useMasonryRelayout();
 
   return (
-    <Link to={`/post/${post.id}`} className="profile-post-link masonry-item">
+    <Link to={`/post/${post.id}`} state={linkState} className="profile-post-link masonry-item">
       <article className="masonry-card profile-post-card">
         <div className="masonry-card__media profile-post-media">
           <MediaPreview

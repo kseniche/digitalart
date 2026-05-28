@@ -49,6 +49,12 @@ class CategoryController extends Controller
      */
     public function update(Request $request, Category $category): JsonResponse
     {
+        if ($this->categoryHasPosts($category)) {
+            return response()->json([
+                'message' => 'Нельзя изменить категорию: к ней привязаны публикации',
+            ], 422);
+        }
+
         $data = $request->validate([
             'name' => 'required|string|max:255|unique:categories,name,' . $category->id,
         ], [
@@ -69,7 +75,7 @@ class CategoryController extends Controller
      */
     public function destroy(Category $category): JsonResponse
     {
-        if (Post::withTrashed()->where('category_id', $category->id)->exists()) {
+        if ($this->categoryHasPosts($category)) {
             return response()->json([
                 'message' => 'Нельзя удалить категорию: к ней привязаны публикации',
             ], 422);
@@ -77,5 +83,10 @@ class CategoryController extends Controller
 
         $category->delete();
         return response()->json(['message' => 'Категория удалена']);
+    }
+
+    private function categoryHasPosts(Category $category): bool
+    {
+        return Post::withTrashed()->where('category_id', $category->id)->exists();
     }
 }

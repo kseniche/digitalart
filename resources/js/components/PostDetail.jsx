@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import { useGoBack } from '../hooks/useGoBack';
+import { getReturnState } from '../utils/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { apiFetch } from '../api';
@@ -7,18 +9,23 @@ import EditPostModal from './modals/EditPostModal';
 import DeletePostModal from './modals/DeletePostModal';
 import LoginModal from './modals/LoginModal';
 import RegisterModal from './modals/RegisterModal';
+import CommentRulesAcceptModal from './modals/CommentRulesAcceptModal';
 import EmptyState from './common/EmptyState';
 import Alert from './common/Alert';
 import MediaPreview from './common/MediaPreview';
 import MasonryGrid from './common/MasonryGrid';
 import MasonryRecommendationCard from './MasonryRecommendationCard';
+import CommentActionsMenu from './common/CommentActionsMenu';
 import '../../css/app.css';
 
 function PostDetail() {
   const COMMENT_COOLDOWN_MS = 10000;
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAuthenticated, user } = useAuth();
+  const location = useLocation();
+  const goBack = useGoBack('/');
+  const postLinkState = getReturnState(location);
+  const { isAuthenticated, user, acceptCommentRules } = useAuth();
   const toast = useToast().toast;
   const [post, setPost] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -40,7 +47,10 @@ function PostDetail() {
   const [commentsSort, setCommentsSort] = useState('new');
   const [recommendations, setRecommendations] = useState([]);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [showCommentRulesModal, setShowCommentRulesModal] = useState(false);
+  const [isAcceptingCommentRules, setIsAcceptingCommentRules] = useState(false);
   const isCommentCooldownActive = Date.now() < nextCommentAllowedAt;
+  const hasAcceptedCommentRules = Boolean(user?.comment_rules_accepted_at);
 
   // Проверяем, является ли текущий пользователь автором поста
   const isOwnPost = post && user && post.author?.id === user.id;
@@ -135,12 +145,7 @@ function PostDetail() {
     }
   };
 
-  const handleComment = async (e) => {
-    e.preventDefault();
-    if (!isAuthenticated) return setShowLoginModal(true);
-    if (!newComment.trim()) return;
-    if (isCommentSubmitting) return;
-
+  const submitComment = async () => {
     const now = Date.now();
     if (now < nextCommentAllowedAt) {
       const secondsLeft = Math.ceil((nextCommentAllowedAt - now) / 1000);
@@ -153,58 +158,92 @@ function PostDetail() {
     setIsCommentSubmitting(true);
 
     try {
-        const response = await apiFetch(`/api/posts/${id}/comments`, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json', 
-                'Accept': 'application/json' 
-            },
-            body: JSON.stringify({ content: newComment })
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            const createdComment = data?.comment;
+      const response = await apiFetch(`/api/posts/${id}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ content: newComment }),
+      });
 
-            if (createdComment?.id && createdComment?.auto_moderation_passed === true) {
-              const commentForState = {
-                id: createdComment.id,
-                author: createdComment.author
-                  ? `${createdComment.author.name || ''} ${createdComment.author.surname || ''}`.trim() || 'Неизвестный автор'
-                  : 'Неизвестный автор',
-                avatar: createdComment.author?.avatar || user?.avatar_url || user?.avatar || '/default-avatar.svg',
-                text: createdComment.content || newComment,
-                createdAt: createdComment.created_at || new Date().toISOString(),
-                likes_count: 0,
-                is_liked: false,
-              };
+      const data = await response.json().catch(() => ({}));
 
-              setComments((prev) => commentsSort === 'popular' ? [...prev, commentForState] : [commentForState, ...prev]);
-            }
+      if (response.ok) {
+        const createdComment = data?.comment;
 
-            setNewComment('');
-            setError('');
-            setNextCommentAllowedAt(Date.now() + COMMENT_COOLDOWN_MS);
-            toast.success(data?.message || 'Комментарий отправлен');
-        } else {
-            const msg = 'Не удалось отправить комментарий. Попробуйте позже.';
-            setError(msg);
-            toast.error(msg);
+        if (createdComment?.id && createdComment?.auto_moderation_passed === true) {
+          const commentForState = {
+            id: createdComment.id,
+            author: createdComment.author
+              ? `${createdComment.author.name || ''} ${createdComment.author.surname || ''}`.trim() || 'Неизвестный автор'
+              : 'Неизвестный автор',
+            avatar: createdComment.author?.avatar || user?.avatar_url || user?.avatar || '/default-avatar.svg',
+            text: createdComment.content || newComment,
+            createdAt: createdComment.created_at || new Date().toISOString(),
+            likes_count: 0,
+            is_liked: false,
+          };
+
+          setComments((prev) => (commentsSort === 'popular' ? [...prev, commentForState] : [commentForState, ...prev]));
         }
-    } catch (err) {
-        const msg = 'Ошибка соединения с сервером';
+
+        setNewComment('');
+        setError('');
+        setNextCommentAllowedAt(Date.now() + COMMENT_COOLDOWN_MS);
+        toast.success(data?.message || 'Комментарий отправлен');
+      } else if (response.status === 403 && data?.code === 'comment_rules_not_accepted') {
+        setShowCommentRulesModal(true);
+        toast.error(data?.message || 'Примите правила комментариев');
+      } else {
+        const msg = data?.message || 'Не удалось отправить комментарий. Попробуйте позже.';
         setError(msg);
         toast.error(msg);
+      }
+    } catch {
+      const msg = 'Ошибка соединения с сервером';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsCommentSubmitting(false);
     }
   };
 
+  const handleComment = async (e) => {
+    e.preventDefault();
+    if (!isAuthenticated) return setShowLoginModal(true);
+    if (!newComment.trim()) return;
+    if (isCommentSubmitting) return;
+
+    if (!hasAcceptedCommentRules) {
+      setShowCommentRulesModal(true);
+      return;
+    }
+
+    await submitComment();
+  };
+
+  const handleAcceptCommentRules = async () => {
+    setIsAcceptingCommentRules(true);
+    const result = await acceptCommentRules();
+    if (result.success) {
+      setShowCommentRulesModal(false);
+      if (newComment.trim()) {
+        await submitComment();
+      }
+    } else {
+      toast.error(result.error || 'Не удалось сохранить согласие');
+    }
+    setIsAcceptingCommentRules(false);
+  };
+
   const mapComments = React.useCallback((postData) => (postData.comments || []).map(comment => ({
     id: comment.id,
+    userId: comment.user_id,
     author: comment.author ? `${comment.author.name} ${comment.author.user_surname || ''}`.trim() : 'Неизвестный автор',
     avatar: comment.author?.avatar_url || comment.author?.avatar || '/default-avatar.svg',
-    text: comment.comment_content || '',
+    text: comment.hidden_notice || comment.comment_content || '',
+    isHidden: Boolean(comment.is_hidden || comment.hidden_notice),
     createdAt: comment.created_at,
     likes_count: comment.likes_count ?? 0,
     is_liked: !!comment.is_liked,
@@ -347,8 +386,7 @@ function PostDetail() {
         throw new Error(errorMessage);
       }
 
-      // Успешно удалено - перенаправляем на главную
-      navigate('/');
+      goBack();
     } catch (e) {
       const msg = e.message || 'Ошибка удаления публикации';
       setError(msg);
@@ -405,7 +443,9 @@ function PostDetail() {
       <div className="post-detail-card">
         {/* Кнопка закрытия */}
         <button
-          onClick={() => window.history.back()}
+          onClick={goBack}
+          aria-label="Назад"
+          title="Назад"
           className="ui-icon-btn"
           style={{
             position: 'absolute',
@@ -459,8 +499,9 @@ function PostDetail() {
           )}
           <div className="post-author-block">
             {isAuthenticated && post.author?.id ? (
-              <Link 
-                to={`/profile/${post.author.id}`} 
+              <Link
+                to={`/profile/${post.author.id}`}
+                state={{ from: location.pathname }}
                 className="post-author-link"
               >
                 <img
@@ -634,7 +675,19 @@ function PostDetail() {
             {/* Сообщение об ошибке */}
             <Alert type="error" message={error} onClose={() => setError('')} />
 
+            <CommentRulesAcceptModal
+              open={showCommentRulesModal}
+              onAccept={handleAcceptCommentRules}
+              onClose={() => setShowCommentRulesModal(false)}
+              isLoading={isAcceptingCommentRules}
+            />
+
             <form onSubmit={handleComment} className="post-comment-form">
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.8125rem' }}>
+                <Link to="/community-rules" style={{ color: '#6b7280', textDecoration: 'underline', textUnderlineOffset: '2px' }}>
+                  Правила комментариев
+                </Link>
+              </p>
               <div className="post-comment-input-row">
                 <img 
                   src={user?.avatar_url || user?.avatar || '/default-avatar.svg'}
@@ -716,11 +769,18 @@ function PostDetail() {
                       <strong className="post-comment-author">
                         {c.author}
                       </strong>
+                      <CommentActionsMenu
+                        commentId={c.id}
+                        authorUserId={c.userId}
+                        isHidden={c.isHidden}
+                        onReported={(msg) => toast.success(msg || 'Жалоба отправлена. Комментарий будет проверен модератором.')}
+                        onLoginRequired={() => setShowLoginModal(true)}
+                      />
                     </div>
-                    <p className="post-comment-text">
+                    <p className="post-comment-text" style={c.isHidden ? { color: '#6b7280', fontStyle: 'italic' } : undefined}>
                       {c.text}
                     </p>
-                    {isAuthenticated && (
+                    {isAuthenticated && !c.isHidden && (
                       <button
                         type="button"
                         onClick={() => handleCommentLike(c.id)}
@@ -762,7 +822,7 @@ function PostDetail() {
           <h2 className="post-recommend-title">Вам может понравиться</h2>
           <MasonryGrid>
             {recommendations.map((rec) => (
-              <MasonryRecommendationCard key={rec.id} post={rec} />
+              <MasonryRecommendationCard key={rec.id} post={rec} linkState={postLinkState} />
             ))}
           </MasonryGrid>
         </div>

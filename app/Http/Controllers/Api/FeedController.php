@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Follower;
 use App\Models\Post;
 use App\Support\PostTags;
 use App\Support\TagSearchLogger;
@@ -24,13 +25,19 @@ class FeedController extends Controller
     private const PER_PAGE_DEFAULT = 12;
 
     /**
-     * Лента постов. Поддерживает q, tag, category_id, sort_by, sort_dir, per_page.
+     * Лента постов. Поддерживает q, tag, category_id, sort_by, sort_dir, per_page, following.
      */
     public function index(Request $request)
     {
         $tagSearchNeedle = null;
+        $followingFilter = $request->boolean('following');
+        $followingSubscriptionsCount = null;
 
         try {
+            if ($followingFilter && ! $request->user()) {
+                return response()->json(['message' => 'Для ленты подписок необходимо войти в систему'], 401);
+            }
+
             $query = Post::with(['author:id,name,user_surname,avatar', 'category:id,name']);
 
             $query->whereHas('author', function ($q) {
@@ -43,6 +50,22 @@ class FeedController extends Controller
             $query->where(function ($q) {
                 $q->whereNull('published_at')->orWhere('published_at', '<=', now());
             });
+
+            if ($followingFilter) {
+                $followingIds = Follower::query()
+                    ->where('follower_id', $request->user()->id)
+                    ->whereNull('deleted_at')
+                    ->whereHas('following', fn ($q) => $q->whereNull('users.deleted_at'))
+                    ->pluck('following_id');
+
+                $followingSubscriptionsCount = $followingIds->count();
+
+                if ($followingIds->isEmpty()) {
+                    $query->whereRaw('0 = 1');
+                } else {
+                    $query->whereIn('user_id', $followingIds);
+                }
+            }
 
             // ——— 2.3.1 Фильтрация (минимум 3 параметра) ———
             // 1) Поиск (q): по заголовку, содержимому, тегам
@@ -143,26 +166,38 @@ class FeedController extends Controller
                 );
             }
 
-            $paginated->getCollection()->transform(function ($post) {
-                $post->setAttribute('category', $post->category?->name);
-                return $post;
-            });
-
-            if ($request->user()) {
-                $userId = $request->user()->id;
+            $authUser = $request->user();
+            $likedIds = [];
+            $favoritedIds = [];
+            if ($authUser) {
                 $postIds = $paginated->getCollection()->pluck('id')->all();
-                $likedIds = \App\Models\Like::where('user_id', $userId)
+                $likedIds = \App\Models\Like::where('user_id', $authUser->id)
                     ->whereIn('post_id', $postIds)
                     ->whereNull('deleted_at')
                     ->pluck('post_id')
                     ->flip()
                     ->all();
-                $favoritedIds = $request->user()->favorites()->whereIn('post_id', $postIds)->pluck('post_id')->flip()->all();
-                $paginated->getCollection()->transform(function ($post) use ($userId, $likedIds, $favoritedIds) {
+                $favoritedIds = $authUser->favorites()->whereIn('post_id', $postIds)->pluck('post_id')->flip()->all();
+            }
+
+            $paginated->getCollection()->transform(function ($post) use ($authUser, $likedIds, $favoritedIds) {
+                $post->setAttribute('category', $post->category?->name);
+                if ($authUser) {
                     $post->setAttribute('liked', isset($likedIds[$post->id]));
                     $post->setAttribute('is_favorited', isset($favoritedIds[$post->id]));
-                    return $post;
-                });
+                }
+
+                return $post;
+            });
+
+            if ($followingFilter) {
+                return response()->json(array_merge(
+                    $paginated->toArray(),
+                    [
+                        'following_filter' => true,
+                        'following_subscriptions_count' => $followingSubscriptionsCount,
+                    ]
+                ));
             }
 
             return $paginated;

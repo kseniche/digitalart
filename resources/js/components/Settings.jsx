@@ -110,7 +110,7 @@ function Settings() {
 
     // Валидация в реальном времени
     if (field === 'email' && value && !validateEmail(value)) {
-      setFieldErrors(prev => ({ ...prev, email: 'Некорректный формат email' }));
+      setFieldErrors(prev => ({ ...prev, email: 'Некорректный формат электронной почты' }));
     }
     if (field === 'phone' && value && !validatePhone(value)) {
       setFieldErrors(prev => ({ ...prev, phone: phoneValidationMessage() }));
@@ -124,13 +124,13 @@ function Settings() {
     if (field === 'name' && value && value.trim() && !PERSON_NAME_LETTERS_RE.test(value.trim())) {
       setFieldErrors(prev => ({
         ...prev,
-        name: 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Jean-Pierre)',
+        name: 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Жан-Пьер)',
       }));
     }
     if (field === 'user_surname' && value && value.trim() && !PERSON_NAME_LETTERS_RE.test(value.trim())) {
       setFieldErrors(prev => ({
         ...prev,
-        user_surname: "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Van der Berg, O'Brien)",
+        user_surname: "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Салтыков-Щедрин, О'Коннор)",
       }));
     }
   };
@@ -153,7 +153,7 @@ function Settings() {
     // Валидация перед отправкой
     const errors = {};
     if (form.email && !validateEmail(form.email)) {
-      errors.email = 'Некорректный формат email';
+      errors.email = 'Некорректный формат электронной почты';
     }
     if (form.phone && !validatePhone(form.phone)) {
       errors.phone = phoneValidationMessage();
@@ -167,11 +167,11 @@ function Settings() {
     if (!form.name || form.name.trim() === '') {
       errors.name = 'Имя обязательно для заполнения';
     } else if (!PERSON_NAME_LETTERS_RE.test(form.name.trim())) {
-      errors.name = 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Jean-Pierre)';
+      errors.name = 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Жан-Пьер)';
     }
 
     if (form.user_surname && form.user_surname.trim() !== '' && !PERSON_NAME_LETTERS_RE.test(form.user_surname.trim())) {
-      errors.user_surname = "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Van der Berg, O'Brien)";
+      errors.user_surname = "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Салтыков-Щедрин, О'Коннор)";
     }
 
     if (Object.keys(errors).length > 0) {
@@ -444,7 +444,7 @@ function Settings() {
             {fieldErrors.username && <div className="form-error">{fieldErrors.username}</div>}
           </div>
           <div>
-            <label className="form-label">Email</label>
+            <label className="form-label">Электронная почта</label>
             <input 
               className="form-input" 
               type="email" 

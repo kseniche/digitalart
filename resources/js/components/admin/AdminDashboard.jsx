@@ -1,17 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import EmptyState from '../common/EmptyState';
+import ReportPeriodModal, { REPORT_PERIOD_FILENAME_PART } from '../modals/ReportPeriodModal';
 
 function AdminDashboard({ stats, onRefresh }) {
   const toast = useToast().toast;
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportPeriod, setReportPeriod] = useState('all');
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const handleDownloadReport = async () => {
+  const handleDownloadReport = async (period) => {
     try {
-      const response = await apiFetch('/api/admin/report', {
+      setIsDownloading(true);
+      const periodParam = period && period !== 'all' ? `?period=${encodeURIComponent(period)}` : '';
+      const response = await apiFetch(`/api/admin/report${periodParam}`, {
         method: 'GET',
         headers: {
-          'Accept': 'text/csv',
+          Accept: 'text/csv',
         },
       });
 
@@ -19,23 +25,25 @@ function AdminDashboard({ stats, onRefresh }) {
         throw new Error('Ошибка при генерации отчета');
       }
 
-      // Получаем blob для скачивания
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      
-      // Формируем имя файла с датой
+
       const date = new Date().toISOString().split('T')[0];
-      a.download = `report_${date}.csv`;
-      
+      const periodFile = REPORT_PERIOD_FILENAME_PART[period] || REPORT_PERIOD_FILENAME_PART.all;
+      a.download = `отчет_${periodFile}_${date}.csv`;
+
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
       toast.success('Отчёт успешно загружен');
+      setShowReportModal(false);
     } catch (error) {
       toast.error('Ошибка при скачивании отчёта');
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -80,19 +88,25 @@ function AdminDashboard({ stats, onRefresh }) {
 
   return (
     <div className="admin-dashboard">
+      <ReportPeriodModal
+        open={showReportModal}
+        period={reportPeriod}
+        onPeriodChange={setReportPeriod}
+        onConfirm={() => handleDownloadReport(reportPeriod)}
+        onClose={() => !isDownloading && setShowReportModal(false)}
+        isLoading={isDownloading}
+      />
+
       <div className="dashboard-header">
         <h2>Общая статистика</h2>
         <div className="admin-dashboard-actions">
-          <button 
-            className="btn btn-primary"
-            onClick={onRefresh}
-          >
+          <button className="btn btn-primary" onClick={onRefresh}>
             Обновить
           </button>
-          <button 
+          <button
             className="admin-btn-report"
-            onClick={handleDownloadReport}
-            title="Скачать полный отчет о системе"
+            onClick={() => setShowReportModal(true)}
+            title="Скачать отчёт о системе за выбранный период"
           >
             Отчет
           </button>
@@ -115,5 +129,3 @@ function AdminDashboard({ stats, onRefresh }) {
 }
 
 export default AdminDashboard;
-
-

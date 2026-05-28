@@ -401,7 +401,7 @@ class AdminApiTest extends TestCase
         $updateResponse->assertStatus(404);
     }
 
-    public function test_admin_delete_comment_is_soft_delete_and_can_be_restored(): void
+    public function test_admin_delete_comment_is_permanent(): void
     {
         $admin = User::factory()->create();
         $admin->assignRole('admin');
@@ -416,6 +416,7 @@ class AdminApiTest extends TestCase
             'user_id' => $author->id,
             'post_id' => $post->id,
             'moderation_status' => 'approved',
+            'approved_at' => now(),
         ]);
 
         $deleteResponse = $this->withHeaders([
@@ -423,20 +424,10 @@ class AdminApiTest extends TestCase
         ])->deleteJson("/api/admin/comments/{$comment->id}");
 
         $deleteResponse->assertStatus(200);
-        $this->assertSoftDeleted('comments', ['id' => $comment->id]);
+        $this->assertDatabaseMissing('comments', ['id' => $comment->id]);
 
         $post->refresh();
         $this->assertSame(0, (int) $post->comment_count);
-
-        $restoreResponse = $this->withHeaders([
-            'Authorization' => 'Bearer ' . $token,
-        ])->postJson("/api/admin/comments/{$comment->id}/restore");
-
-        $restoreResponse->assertStatus(200);
-        $this->assertDatabaseHas('comments', [
-            'id' => $comment->id,
-            'deleted_at' => null,
-        ]);
     }
 
     public function test_admin_report_uses_actual_model_fields(): void

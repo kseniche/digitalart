@@ -32,4 +32,15 @@ class PostTagsTest extends TestCase
         $this->assertFalse(PostTags::anyContainsSubstring(['illustration', 'photography'], 'art'));
         $this->assertTrue(PostTags::anyContainsSubstring(['art'], 'art'));
     }
+
+    public function test_normalize_for_storage_deduplicates_case_insensitive(): void
+    {
+        $normalized = PostTags::normalizeForStorage('Digital-Art, digital-art, DIGITAL-ART, pixel');
+        $this->assertSame(['Digital-Art', 'pixel'], $normalized);
+    }
+
+    public function test_normalize_for_storage_trims_and_skips_empty(): void
+    {
+        $this->assertSame(['art'], PostTags::normalizeForStorage(' art , , '));
+    }
 }

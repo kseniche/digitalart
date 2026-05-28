@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 // Удаление просроченных personal access tokens из personal_access_tokens.
 Schedule::command('sanctum:prune-expired --hours=24')->daily();
+Schedule::command('comments:auto-review-stale')->daily();

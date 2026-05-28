@@ -15,6 +15,8 @@ import Settings from './components/Settings';
 import AdminPanel from './components/admin/AdminPanel';
 import ForgotPassword from './components/auth/ForgotPassword';
 import ResetPassword from './components/auth/ResetPassword';
+import CommunityRulesPage from './components/legal/CommunityRulesPage';
+import UserAgreementPage from './components/legal/UserAgreementPage';
 
 // CSRF для SPA: получаем cookie до любых мутирующих запросов (критерий 2.2.8).
 ensureCsrfCookie();
@@ -35,6 +37,8 @@ function App() {
           <Route path="/admin" element={<AdminPanel />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/community-rules" element={<CommunityRulesPage />} />
+          <Route path="/user-agreement" element={<UserAgreementPage />} />
         </Routes>
         <ToastContainer />
       </div>

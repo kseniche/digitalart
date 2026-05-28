@@ -77,7 +77,7 @@ function ResetPassword() {
             <input id="token" type="text" className="form-input" value={token} onChange={(e) => setToken(e.target.value)} />
           </div>
           <div className="form-group">
-            <label htmlFor="email" className="form-label">Email</label>
+            <label htmlFor="email" className="form-label">Электронная почта</label>
             <input id="email" type="email" className="form-input" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div className="form-group">

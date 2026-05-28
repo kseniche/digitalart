@@ -86,6 +86,11 @@ function PostCard({ post, onAction, showView = true }) {
         <div className="admin-status-row">
           {post.author_deleted && <span className="admin-status-badge admin-status-badge--rejected">Автор удален</span>}
           {isPending && <span className="admin-status-badge admin-status-badge--pending">На модерации</span>}
+          {post.moderation_overdue && (
+            <span className="admin-status-badge admin-status-badge--rejected" title="Публикация ожидает проверки более 30 дней">
+              Долгое ожидание модерации
+            </span>
+          )}
           {isApproved && <span className="admin-status-badge admin-status-badge--approved">Одобрено</span>}
           {isRejected && <span className="admin-status-badge admin-status-badge--rejected">Отклонено</span>}
           {autoModerationPassed ? (

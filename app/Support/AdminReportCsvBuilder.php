@@ -116,16 +116,25 @@ class AdminReportCsvBuilder
      */
     private function statsRows(array $stats): array
     {
+        $scopeSuffix = ! empty($stats['period_is_filtered'])
+            ? ' (за период)'
+            : ' (за всё время)';
+
         $rows = [
             ['ОБЩАЯ СТАТИСТИКА'],
+            ...($stats['report_period'] ?? null ? [
+                ['Период отчёта', $this->cell($stats['report_period'] ?? '')],
+                ['Начало периода', $this->cell($stats['period_from'] ?? '—')],
+                ['Конец периода', $this->cell($stats['period_to'] ?? '—')],
+            ] : []),
             [''],
             ['Показатель', 'Значение'],
-            ['Всего пользователей (за все время)', $this->cell($stats['total_users'] ?? '')],
+            ['Всего пользователей' . $scopeSuffix, $this->cell($stats['total_users'] ?? '')],
             ['Активных пользователей', $this->cell($stats['active_users'] ?? '')],
             ['Удаленных пользователей', $this->cell($stats['deleted_users'] ?? '')],
             ['Заблокированных пользователей', $this->cell($stats['banned_users'] ?? '')],
             [''],
-            ['Всего публикаций (за все время)', $this->cell($stats['total_posts'] ?? '')],
+            ['Всего публикаций' . $scopeSuffix, $this->cell($stats['total_posts'] ?? '')],
             ['Активных публикаций', $this->cell($stats['active_posts'] ?? '')],
             ['Удаленных публикаций', $this->cell($stats['deleted_posts'] ?? '')],
             ['Черновиков', $this->cell($stats['draft_posts'] ?? '')],
@@ -133,7 +142,7 @@ class AdminReportCsvBuilder
             ['Отклоненных публикаций', $this->cell($stats['rejected_posts'] ?? '')],
             ['Одобренных публикаций', $this->cell($stats['approved_posts'] ?? '')],
             [''],
-            ['Всего комментариев (за все время)', $this->cell($stats['total_comments'] ?? '')],
+            ['Всего комментариев' . $scopeSuffix, $this->cell($stats['total_comments'] ?? '')],
             ['Активных комментариев', $this->cell($stats['active_comments'] ?? '')],
             ['Удаленных комментариев', $this->cell($stats['deleted_comments'] ?? '')],
             ['Комментариев на модерации', $this->cell($stats['pending_comments'] ?? '')],

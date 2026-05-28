@@ -1,33 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 
-function CommentCard({ comment, onAction }) {
-  const isDeleted = comment.deleted_at !== null;
-  const isApproved = comment.moderation_status === 'approved';
-  const isPending = comment.moderation_status === 'pending';
-  const autoModerationPassed = comment.auto_moderation_passed !== false;
+function CommentCard({
+  comment,
+  tab,
+  onConfirm,
+  onDelete,
+  onDeleteWithWords,
+  onUnhide,
+  onDismissReports,
+  onOpenPost,
+}) {
+  const [banWords, setBanWords] = useState('');
+  const [showBanInput, setShowBanInput] = useState(false);
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('ru-RU', {
+    if (!dateString) return '—';
+    return new Date(dateString).toLocaleString('ru-RU', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
-  const truncateText = (text, maxLength = 200) => {
-    if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength) + '...';
-  };
+  const isDeleted = comment.deleted_at != null;
+  const reportsCount = comment.reports_count || 0;
 
   return (
     <div className={`admin-comment-card ${isDeleted ? 'admin-comment-card--deleted' : ''}`}>
       <div className="admin-comment-card__header">
         <div className="admin-comment-card__author">
           <img
-            src={comment.author?.avatar_url || '/default-avatar.svg'}
-            alt={comment.author?.name}
+            src={comment.author?.avatar_url || comment.author?.avatar || '/default-avatar.svg'}
+            alt=""
             className="author-avatar"
           />
           <div className="author-info">
@@ -37,68 +43,134 @@ function CommentCard({ comment, onAction }) {
             <p className="admin-comment-date">{formatDate(comment.created_at)}</p>
           </div>
         </div>
-        <div className="admin-status-row" style={{ alignItems: 'center' }}>
-          {comment.author_deleted && <span className="admin-status-badge admin-status-badge--rejected">Автор удален</span>}
-          {isPending && <span className="admin-status-badge admin-status-badge--pending">На модерации</span>}
-          {isApproved && <span className="admin-status-badge admin-status-badge--approved">Одобрен</span>}
-          {autoModerationPassed ? (
-            <span className="admin-status-badge admin-status-badge--approved">Авто: пройдено</span>
-          ) : (
-            <span className="admin-status-badge admin-status-badge--rejected">Авто: не пройдено</span>
+        <div className="admin-status-row" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          {comment.author_deleted && (
+            <span className="admin-status-badge admin-status-badge--rejected">Автор удалён</span>
           )}
-          {isDeleted && <div className="deleted-badge">Удален</div>}
+          {comment.is_hidden && (
+            <span className="admin-status-badge admin-status-badge--pending">Скрыт</span>
+          )}
+          {comment.is_admin_reviewed && (
+            <span className="admin-status-badge admin-status-badge--approved">Проверен</span>
+          )}
+          {reportsCount > 0 && (
+            <span className="admin-status-badge admin-status-badge--rejected">
+              Жалоб: {reportsCount}
+            </span>
+          )}
+          {isDeleted && <span className="deleted-badge">Удалён</span>}
         </div>
       </div>
 
       <div className="admin-comment-card__content">
-        <p className="admin-comment-text">
-          {truncateText(comment.comment_content)}
-        </p>
-        {!autoModerationPassed && comment.auto_moderation_reason && (
-          <p className="admin-post-preview" style={{ marginTop: '0.5rem' }}>
-            Причина автомодерации: {comment.auto_moderation_reason}
-          </p>
-        )}
+        <p className="admin-comment-text">{comment.comment_content}</p>
       </div>
 
-      {comment.post && (
+      {(comment.post_id || comment.post?.id) && (
         <div className="admin-comment-card__post">
-          <div className="admin-post-reference">
-            <h5 className="admin-comment-post-title">К публикации: {comment.post.post_title}</h5>
-            <p className="admin-post-preview">
-              {truncateText(comment.post.post_content || '', 100)}
-            </p>
-            {comment.post.image_url && (
-              <img
-                src={comment.post.image_url}
-                alt={comment.post.post_title}
-                className="admin-comment-post-thumbnail"
-              />
-            )}
-          </div>
+          <button
+            type="button"
+            className="admin-btn admin-btn-outline admin-btn-sm"
+            onClick={() => onOpenPost?.(comment.post_id || comment.post?.id)}
+          >
+            Открыть публикацию
+          </button>
         </div>
       )}
 
-      <div className="admin-comment-card__actions">
-        {!isDeleted && !isApproved && (
+      {tab === 'reports' && Array.isArray(comment.reports) && comment.reports.length > 0 && (
+        <div style={{ marginTop: '0.75rem', fontSize: '0.875rem' }}>
+          <strong>Причины жалоб:</strong>{' '}
+          {(comment.report_reasons || []).join(', ')}
+          <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem' }}>
+            {comment.reports.map((r) => (
+              <li key={r.id} style={{ marginBottom: '0.35rem' }}>
+                {r.reason_label}
+                {r.other_text ? ` — ${r.other_text}` : ''}
+                {' · '}
+                {r.reporter
+                  ? `${r.reporter.name || ''} ${r.reporter.user_surname || ''} (${r.reporter.email})`.trim()
+                  : '—'}
+                {' · '}
+                {formatDate(r.created_at)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!isDeleted && (
+        <div className="admin-comment-card__actions" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+          {tab === 'recent' && !comment.is_admin_reviewed && (
+            <button
+              type="button"
+              className="admin-btn admin-btn-success admin-btn-sm"
+              onClick={() => onConfirm?.(comment.id)}
+            >
+              ✅ Подтвердить
+            </button>
+          )}
+          {reportsCount > 0 && (
+            <button
+              type="button"
+              className="admin-btn admin-btn-outline admin-btn-sm"
+              onClick={() => onDismissReports?.(comment.id)}
+            >
+              Отклонить жалобы
+            </button>
+          )}
+          {comment.is_hidden && (
+            <button
+              type="button"
+              className="admin-btn admin-btn-primary admin-btn-sm"
+              onClick={() => onUnhide?.(comment.id)}
+            >
+              Восстановить на сайте
+            </button>
+          )}
           <button
-            className="admin-btn admin-btn-success admin-btn-sm"
-            onClick={() => onAction('approve', comment.id)}
+            type="button"
+            className="admin-btn admin-btn-danger admin-btn-sm"
+            onClick={() => onDelete?.(comment.id)}
           >
-            Одобрить
+            🗑 Удалить
           </button>
-        )}
-        <button
-          className="admin-btn admin-btn-danger admin-btn-sm"
-          onClick={() => onAction('delete', comment.id)}
-        >
-          Удалить
-        </button>
-      </div>
+          <button
+            type="button"
+            className="admin-btn admin-btn-outline admin-btn-sm"
+            onClick={() => setShowBanInput((v) => !v)}
+          >
+            Удалить + в словарь
+          </button>
+        </div>
+      )}
+
+      {showBanInput && !isDeleted && (
+        <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            className="admin-search-input"
+            placeholder="Слова через запятую"
+            value={banWords}
+            onChange={(e) => setBanWords(e.target.value)}
+            style={{ flex: '1', minWidth: '200px' }}
+          />
+          <button
+            type="button"
+            className="admin-btn admin-btn-danger admin-btn-sm"
+            onClick={() => {
+              const words = banWords.split(',').map((w) => w.trim()).filter(Boolean);
+              onDeleteWithWords?.(comment.id, words);
+              setShowBanInput(false);
+              setBanWords('');
+            }}
+          >
+            Удалить
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 export default CommentCard;
-
-

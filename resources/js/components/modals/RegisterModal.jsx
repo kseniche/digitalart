@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import Alert from '../common/Alert';
 
@@ -15,6 +16,7 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
     password: '',
     confirmPassword: ''
   });
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
 
@@ -42,13 +44,13 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
     if (!first) {
       newErrors.firstName = 'Имя обязательно';
     } else if (!PERSON_NAME_LETTERS_RE.test(first)) {
-      newErrors.firstName = 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Jean-Pierre)';
+      newErrors.firstName = 'Имя может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Анна-Мария, Жан-Пьер)';
     }
 
     if (!last) {
       newErrors.lastName = 'Фамилия обязательна';
     } else if (!PERSON_NAME_LETTERS_RE.test(last)) {
-      newErrors.lastName = "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Van der Berg, O'Brien)";
+      newErrors.lastName = "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Салтыков-Щедрин, О'Коннор)";
     }
 
     if (!formData.username.trim()) {
@@ -58,9 +60,9 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
     }
 
     if (!formData.email) {
-      newErrors.email = 'Email обязателен';
+      newErrors.email = 'Укажите электронную почту';
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email неверного формата';
+      newErrors.email = 'Некорректный формат электронной почты';
     }
 
     if (!formData.password) {
@@ -73,6 +75,10 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
       newErrors.confirmPassword = 'Подтверждение пароля обязательно';
     } else if (formData.password !== formData.confirmPassword) {
       newErrors.confirmPassword = 'Пароли не совпадают';
+    }
+
+    if (!acceptTerms) {
+      newErrors.accept_terms = 'Необходимо принять пользовательское соглашение и правила сообщества';
     }
 
     setErrors(newErrors);
@@ -95,7 +101,8 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
       username: formData.username,
       email: formData.email,
       password: formData.password,
-      passwordConfirmation: formData.confirmPassword
+      passwordConfirmation: formData.confirmPassword,
+      accept_terms: true,
     };
     
     try {
@@ -109,7 +116,8 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
           Object.keys(result.errors).forEach(key => {
             const val = result.errors[key];
             const msg = Array.isArray(val) ? val[0] : val;
-            nextErrors[key === 'passwordConfirmation' ? 'confirmPassword' : key] = msg;
+            const fieldKey = key === 'passwordConfirmation' ? 'confirmPassword' : key;
+            nextErrors[fieldKey] = msg;
           });
         }
         setErrors(nextErrors);
@@ -187,7 +195,7 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
 
           <div className="form-group">
             <label htmlFor="email" className="form-label">
-              Email
+              Электронная почта
             </label>
             <input
               type="email"
@@ -196,7 +204,7 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
               value={formData.email}
               onChange={handleChange}
               className="form-input"
-              placeholder="Введите ваш email"
+              placeholder="Введите электронную почту"
             />
             {errors.email && <div className="form-error">{errors.email}</div>}
           </div>
@@ -233,11 +241,48 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
             {errors.confirmPassword && <div className="form-error">{errors.confirmPassword}</div>}
           </div>
 
+          <div className="form-group">
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '0.5rem',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                lineHeight: 1.5,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={acceptTerms}
+                onChange={(e) => {
+                  setAcceptTerms(e.target.checked);
+                  if (errors.accept_terms) {
+                    setErrors((prev) => ({ ...prev, accept_terms: '' }));
+                  }
+                }}
+                style={{ marginTop: '0.2rem' }}
+              />
+              <span>
+                Я принимаю{' '}
+                <Link to="/user-agreement" target="_blank" rel="noopener noreferrer" style={{ color: '#7B0000' }} onClick={(e) => e.stopPropagation()}>
+                  Пользовательское соглашение
+                </Link>
+                {' '}и{' '}
+                <Link to="/community-rules" target="_blank" rel="noopener noreferrer" style={{ color: '#7B0000' }} onClick={(e) => e.stopPropagation()}>
+                  Правила сообщества
+                </Link>
+                .
+              </span>
+            </label>
+            {errors.accept_terms && <div className="form-error">{errors.accept_terms}</div>}
+          </div>
+
           <button
             type="submit"
             className="btn btn-primary"
             style={{ width: '100%', marginBottom: '1rem' }}
-            disabled={isLoading}
+            disabled={isLoading || !acceptTerms}
           >
             {isLoading ? 'Регистрация...' : 'Зарегистрироваться'}
           </button>

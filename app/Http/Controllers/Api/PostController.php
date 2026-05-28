@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Post;
 use App\Services\AutoModerationService;
+use App\Support\PostTags;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -198,10 +199,7 @@ class PostController extends Controller
         $imagePath = $uploaded;
 
         // Теги: в модели Post поле `tags` приведено к cast array — в create передаём массив.
-        $tagsRaw = $data['tags'] ?? '';
-        $tagsForModel = is_string($tagsRaw)
-            ? array_values(array_filter(array_map('trim', explode(',', $tagsRaw)), fn (string $t) => $t !== ''))
-            : [];
+        $tagsForModel = PostTags::normalizeForStorage($data['tags'] ?? '');
 
         $isDraft = !empty($data['is_draft']);
         $publishedAt = null;
@@ -322,6 +320,15 @@ public function show($id, Request $request)
             $commentsSort = $request->input('comments_sort', 'new');
             $commentsQuery = \App\Models\Comment::where('post_id', $post->id)
                 ->where('moderation_status', 'approved')
+                ->whereNull('deleted_at')
+                ->where(function ($q) use ($currentUser) {
+                    $q->where('is_hidden', false);
+                    if ($currentUser) {
+                        $q->orWhere(function ($own) use ($currentUser) {
+                            $own->where('user_id', $currentUser->id)->where('is_hidden', true);
+                        });
+                    }
+                })
                 ->whereHas('author', fn ($q) => $q->whereNull('users.deleted_at'))
                 ->with(['author:id,name,user_surname,avatar'])
                 ->withCount('likes as likes_count');
@@ -344,13 +351,19 @@ public function show($id, Request $request)
                     ->all();
             }
 
-            $post->comments->transform(function ($comment) use ($likedCommentIds) {
+            $post->comments->transform(function ($comment) use ($likedCommentIds, $currentUser) {
                 if ($comment->author) {
                     $comment->author_name = $comment->author->name . ' ' . ($comment->author->user_surname ?? '');
                 } else {
                     $comment->author_name = 'Неизвестный автор';
                 }
                 $comment->is_liked = isset($likedCommentIds[$comment->id]);
+                if ($comment->is_hidden && $currentUser && (int) $comment->user_id === (int) $currentUser->id) {
+                    $comment->setAttribute(
+                        'hidden_notice',
+                        'Комментарий временно скрыт и ожидает проверки модератором.'
+                    );
+                }
 
                 return $comment;
             });
@@ -455,10 +468,7 @@ public function update(Request $request, Post $post)
         $nextApprovedAt = $post->approved_at;
         $normalizedTags = $post->tags;
         if (array_key_exists('tags', $data)) {
-            $tagsRaw = $data['tags'] ?? '';
-            $normalizedTags = is_string($tagsRaw)
-                ? array_values(array_filter(array_map('trim', explode(',', $tagsRaw)), fn (string $t) => $t !== ''))
-                : [];
+            $normalizedTags = PostTags::normalizeForStorage($data['tags'] ?? '');
         }
         $isResubmission = !$isDraft;
         $autoModeration = null;

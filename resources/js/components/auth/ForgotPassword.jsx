@@ -16,7 +16,7 @@ function ForgotPassword() {
     setMessage('');
 
     if (!email.trim()) {
-      setError('Введите email');
+      setError('Укажите электронную почту');
       return;
     }
 
@@ -40,7 +40,7 @@ function ForgotPassword() {
         return;
       }
 
-      setMessage(data?.message || 'Если аккаунт существует, инструкция отправлена на email.');
+      setMessage(data?.message || 'Если аккаунт существует, инструкция отправлена на электронную почту.');
     } catch (_err) {
       setError('Ошибка соединения с сервером');
     } finally {
@@ -53,7 +53,7 @@ function ForgotPassword() {
       <div className="settings-form-card" style={{ background: '#DEDDD8', border: '1px solid #D4D1CC', borderRadius: '12px', padding: '1.5rem' }}>
         <h1 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1.4rem', fontFamily: 'JetBrains Mono, monospace' }}>Восстановление пароля</h1>
         <p style={{ color: '#4b5563', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.9rem', marginBottom: '1rem' }}>
-          Укажите email, и мы отправим ссылку для сброса пароля.
+          Укажите электронную почту, и мы отправим ссылку для сброса пароля.
         </p>
 
         <Alert type="success" message={message} className="home-alert" />
@@ -61,14 +61,14 @@ function ForgotPassword() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="email" className="form-label">Email</label>
+            <label htmlFor="email" className="form-label">Электронная почта</label>
             <input
               id="email"
               type="email"
               className="form-input"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="Введите email"
+              placeholder="Введите электронную почту"
             />
           </div>
 

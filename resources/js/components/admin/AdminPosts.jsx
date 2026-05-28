@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import PostCard from './PostCard';
@@ -6,6 +6,7 @@ import ConfirmModal from '../modals/ConfirmModal';
 import EmptyState from '../common/EmptyState';
 import Alert from '../common/Alert';
 import MediaPreview from '../common/MediaPreview';
+import AdminModerationStats from './AdminModerationStats';
 
 function AdminPosts() {
   const toast = useToast().toast;
@@ -24,6 +25,7 @@ function AdminPosts() {
   const [selectedPostDetail, setSelectedPostDetail] = useState(null);
   const [postDetailLoading, setPostDetailLoading] = useState(false);
   const [confirmDeleteComment, setConfirmDeleteComment] = useState({ open: false, commentId: null });
+  const [stats, setStats] = useState(null);
 
   const formatDate = (dateString) => {
     if (!dateString) return '—';
@@ -50,9 +52,29 @@ function AdminPosts() {
     return [];
   };
 
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await apiFetch('/api/admin/posts/stats');
+      if (response.ok) {
+        setStats(await response.json());
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
   useEffect(() => {
     fetchPosts();
   }, [statusFilter, searchQuery, currentPage]);
+
+  const refreshPosts = () => {
+    fetchPosts();
+    fetchStats();
+  };
 
   const fetchPosts = async () => {
     try {
@@ -153,7 +175,7 @@ function AdminPosts() {
         const msg = data?.message || 'Публикация успешно удалена';
         setSuccessMessage(msg);
         toast.success(msg);
-        fetchPosts();
+        refreshPosts();
         if (selectedPostDetail?.post?.id === postId) {
           setSelectedPostDetail(null);
         }
@@ -184,7 +206,7 @@ function AdminPosts() {
         const msg = data?.message || 'Публикация отклонена';
         setSuccessMessage(msg);
         toast.success(msg);
-        fetchPosts();
+        refreshPosts();
         if (selectedPostDetail?.post?.id === postId) {
           fetchPostDetail(postId);
         }
@@ -213,7 +235,7 @@ function AdminPosts() {
         const msg = 'Публикация одобрена';
         setSuccessMessage(msg);
         toast.success(msg);
-        fetchPosts();
+        refreshPosts();
         if (selectedPostDetail?.post?.id === postId) {
           fetchPostDetail(postId);
         }
@@ -361,8 +383,7 @@ function AdminPosts() {
                   src={post?.image_url}
                   mediaType={post?.media_type}
                   alt={post?.post_title}
-                  className="fixed-height-image"
-                  style={{ width: '100%' }}
+                  className="admin-detail-media-el"
                 />
               </div>
               <div className="card-info admin-detail-content">
@@ -486,8 +507,19 @@ function AdminPosts() {
       />
       <div className="admin-section-header">
         <h2>Модерация публикаций</h2>
-        
-        {/* Сообщения об успехе и ошибках */}
+
+        {stats && (
+          <AdminModerationStats
+            items={[
+              { value: stats.pending, label: 'На модерации' },
+              { value: stats.approved, label: 'Одобренные' },
+              { value: stats.rejected, label: 'Отклонённые' },
+              { value: stats.total, label: 'Всего' },
+              { value: stats.deleted_last_30_days, label: 'Удалено за 30 дней' },
+            ]}
+          />
+        )}
+
         <Alert type="success" message={successMessage} onClose={() => setSuccessMessage('')} className="admin-alert" />
         <Alert type="error" message={error} onClose={() => setError('')} className="admin-alert" />
         <div className="admin-filters admin-filters--sticky">

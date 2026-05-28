@@ -123,7 +123,9 @@ function AdminPanel() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <AdminDashboard stats={stats} onRefresh={fetchStats} />;
+        return (
+          <AdminDashboard stats={stats} onRefresh={fetchStats} />
+        );
       case 'users':
         return <AdminUsers />;
       case 'posts':
@@ -133,7 +135,9 @@ function AdminPanel() {
       case 'categories':
         return <AdminCategories />;
       default:
-        return <AdminDashboard stats={stats} onRefresh={fetchStats} />;
+        return (
+          <AdminDashboard stats={stats} onRefresh={fetchStats} />
+        );
     }
   };
 

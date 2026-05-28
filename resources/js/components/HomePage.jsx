@@ -47,6 +47,8 @@ function HomePage() {
     setCurrentPage,
     filtersPanelOpen,
     setFiltersPanelOpen,
+    followingOnly,
+    setFollowingOnly,
     saveScrollPosition,
     consumeScrollRestore,
     resetAllFilters,
@@ -60,6 +62,7 @@ function HomePage() {
   const [lastPage, setLastPage] = useState(1);
   const [error, setError] = useState('');
   const [feedTotal, setFeedTotal] = useState(0);
+  const [followingSubscriptionsCount, setFollowingSubscriptionsCount] = useState(null);
   const feedRequestIdRef = useRef(0);
   const filtersMountedRef = useRef(false);
   const scrollRestoredRef = useRef(false);
@@ -95,8 +98,11 @@ function HomePage() {
       params.set('category', categoryFilter);
       params.set('category_id', categoryFilter);
     }
+    if (followingOnly) {
+      params.set('following', 'true');
+    }
     return params.toString();
-  }, [sortBy, sortDir, searchQuery, tagFilter, categoryFilter, perPage]);
+  }, [sortBy, sortDir, searchQuery, tagFilter, categoryFilter, perPage, followingOnly]);
 
   const loadPosts = useCallback(async (page = 1) => {
     const requestId = ++feedRequestIdRef.current;
@@ -119,12 +125,18 @@ function HomePage() {
         setFeedTotal(typeof data.total === 'number' ? data.total : rows.length);
         setCurrentPage(typeof data.current_page === 'number' ? data.current_page : page);
         setLastPage(typeof data.last_page === 'number' ? data.last_page : 1);
+        setFollowingSubscriptionsCount(
+          followingOnly && typeof data.following_subscriptions_count === 'number'
+            ? data.following_subscriptions_count
+            : null
+        );
         setError('');
       } else {
         setPosts([]);
         setFeedTotal(0);
         setCurrentPage(1);
         setLastPage(1);
+        setFollowingSubscriptionsCount(null);
         const msg = 'Не удалось загрузить публикации. Попробуйте позже.';
         setError(msg);
         toast.error(msg);
@@ -137,6 +149,7 @@ function HomePage() {
       setFeedTotal(0);
       setCurrentPage(1);
       setLastPage(1);
+      setFollowingSubscriptionsCount(null);
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
       toast.error(msg);
@@ -145,7 +158,13 @@ function HomePage() {
         setIsFeedLoading(false);
       }
     }
-  }, [buildFeedParams, toast, setCurrentPage]);
+  }, [buildFeedParams, toast, setCurrentPage, followingOnly]);
+
+  useEffect(() => {
+    if (!isAuthenticated && followingOnly) {
+      setFollowingOnly(false);
+    }
+  }, [isAuthenticated, followingOnly, setFollowingOnly]);
 
   useEffect(() => {
     apiFetch('/api/categories')
@@ -169,8 +188,8 @@ function HomePage() {
   }, [tagFilterInput, setTagFilter]);
 
   const filterSignature = useMemo(
-    () => JSON.stringify({ searchQuery, tagFilter, categoryFilter, sortBy, sortDir, perPage }),
-    [searchQuery, tagFilter, categoryFilter, sortBy, sortDir, perPage]
+    () => JSON.stringify({ searchQuery, tagFilter, categoryFilter, sortBy, sortDir, perPage, followingOnly }),
+    [searchQuery, tagFilter, categoryFilter, sortBy, sortDir, perPage, followingOnly]
   );
 
   useEffect(() => {
@@ -237,7 +256,26 @@ function HomePage() {
     tagFilterInput.trim() !== '' ||
     categoryFilter !== '' ||
     sortBy !== FEED_DEFAULT_SORT_BY ||
-    sortDir !== FEED_DEFAULT_SORT_DIR;
+    sortDir !== FEED_DEFAULT_SORT_DIR ||
+    followingOnly;
+
+  const emptyFollowingState = useMemo(() => {
+    if (!followingOnly || isFeedLoading || error) return null;
+    if (followingSubscriptionsCount === null) return null;
+    if (followingSubscriptionsCount === 0) {
+      return {
+        title: 'Подписки пока отсутствуют',
+        text: 'У вас пока нет подписок. Подпишитесь на авторов, чтобы видеть их публикации в отдельной ленте.',
+      };
+    }
+    if (displayPosts.length === 0 && feedTotal === 0) {
+      return {
+        title: 'Публикаций от подписок нет',
+        text: 'У авторов, на которых вы подписаны, пока нет опубликованных работ.',
+      };
+    }
+    return null;
+  }, [followingOnly, isFeedLoading, followingSubscriptionsCount, displayPosts.length, feedTotal, error]);
 
   return (
     <div className="main-content">
@@ -292,6 +330,31 @@ function HomePage() {
                 inputMode="search"
               />
             </div>
+            {isAuthenticated && (
+              <div className="homepage-filter-block homepage-filter-block--following">
+                <label
+                  className="homepage-following-toggle"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.875rem',
+                    color: '#111827',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={followingOnly}
+                    onChange={(e) => setFollowingOnly(e.target.checked)}
+                    style={{ accentColor: '#7B0000' }}
+                  />
+                  Только публикации авторов, на которых я подписан
+                </label>
+              </div>
+            )}
             <div className="homepage-filter-block">
               <label style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.875rem', color: '#111827' }}>Категория:</label>
               <select
@@ -457,12 +520,14 @@ function HomePage() {
 
       {displayPosts.length === 0 && !isFeedLoading && (
         <EmptyState
-          title="Работы не найдены"
-          text="Попробуйте изменить поисковый запрос или фильтры. В ленте только одобренные опубликованные работы."
+          title={emptyFollowingState?.title ?? 'Работы не найдены'}
+          text={emptyFollowingState?.text ?? 'Попробуйте изменить поисковый запрос или фильтры. В ленте только одобренные опубликованные работы.'}
           actions={
             <>
-              <button className="btn btn-outline" onClick={resetAllFilters}>Сбросить фильтры</button>
-              {isAuthenticated && <Link to="/create" className="btn btn-primary">Создать публикацию</Link>}
+              <button type="button" className="btn btn-outline" onClick={resetAllFilters}>Сбросить фильтры</button>
+              {!emptyFollowingState && isAuthenticated && (
+                <Link to="/create" className="btn btn-primary">Создать публикацию</Link>
+              )}
             </>
           }
         />

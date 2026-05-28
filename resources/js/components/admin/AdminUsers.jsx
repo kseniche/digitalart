@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import UserCard from './UserCard';
@@ -8,6 +8,7 @@ import ConfirmModal from '../modals/ConfirmModal';
 import EmptyState from '../common/EmptyState';
 import Alert from '../common/Alert';
 import MediaPreview from '../common/MediaPreview';
+import AdminModerationStats from './AdminModerationStats';
 
 function AdminUsers() {
   const toast = useToast().toast;
@@ -35,6 +36,7 @@ function AdminUsers() {
   const [banReason, setBanReason] = useState('');
   const [banLoading, setBanLoading] = useState(false);
   const [unbanLoading, setUnbanLoading] = useState(false);
+  const [stats, setStats] = useState(null);
 
   const formatDate = (dateString) => {
     if (!dateString) return '—';
@@ -61,9 +63,29 @@ function AdminUsers() {
     return [];
   };
 
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await apiFetch('/api/admin/users/stats');
+      if (response.ok) {
+        setStats(await response.json());
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
   useEffect(() => {
     fetchUsers();
   }, [statusFilter, searchQuery, currentPage]);
+
+  const refreshUsers = () => {
+    fetchUsers();
+    fetchStats();
+  };
 
   const fetchUsers = async () => {
     try {
@@ -143,7 +165,7 @@ function AdminUsers() {
         const msg = 'Пользователь успешно удалён';
         setSuccessMessage(msg);
         toast.success(msg);
-        fetchUsers();
+        refreshUsers();
         if (selectedUser && selectedUser.id === userId) {
           setSelectedUser(null);
         }
@@ -172,7 +194,7 @@ function AdminUsers() {
         const msg = 'Пользователь успешно восстановлен';
         setSuccessMessage(msg);
         toast.success(msg);
-        fetchUsers();
+        refreshUsers();
         if (selectedUser && selectedUser.id === userId) {
           setSelectedUser(null);
         }
@@ -211,7 +233,7 @@ function AdminUsers() {
         toast.success(msg);
         setConfirmBan({ open: false, userId: null });
         setBanReason('');
-        fetchUsers();
+        refreshUsers();
         if (selectedUser && selectedUser.id === userId && data.user) {
           setSelectedUser(data.user);
         }
@@ -246,7 +268,7 @@ function AdminUsers() {
         const msg = 'Пользователь разблокирован';
         setSuccessMessage(msg);
         toast.success(msg);
-        fetchUsers();
+        refreshUsers();
         if (selectedUser && selectedUser.id === userId && data.user) {
           setSelectedUser(data.user);
         }
@@ -510,8 +532,7 @@ function AdminUsers() {
                   src={post?.image_url}
                   mediaType={post?.media_type}
                   alt={post?.post_title}
-                  className="fixed-height-image"
-                  style={{ width: '100%' }}
+                  className="admin-detail-media-el"
                 />
               </div>
 
@@ -783,8 +804,19 @@ function AdminUsers() {
       />
       <div className="admin-section-header">
         <h2>Управление пользователями</h2>
-        
-        {/* Сообщения об успехе и ошибках */}
+
+        {stats && (
+          <AdminModerationStats
+            items={[
+              { value: stats.active, label: 'Активные' },
+              { value: stats.banned, label: 'Заблокированные' },
+              { value: stats.deleted, label: 'Удалённые' },
+              { value: stats.total, label: 'Всего' },
+              { value: stats.deleted_last_30_days, label: 'Удалено за 30 дней' },
+            ]}
+          />
+        )}
+
         <Alert type="success" message={successMessage} onClose={() => setSuccessMessage('')} className="admin-alert" />
         <Alert type="error" message={error} onClose={() => setError('')} className="admin-alert" />
         <div className="admin-filters admin-filters--sticky">

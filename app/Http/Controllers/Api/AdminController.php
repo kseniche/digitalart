@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Support\AdminReportCsvBuilder;
+use App\Support\PostTags;
 use App\Models\BannedWord;
 use App\Models\User;
 use App\Models\Post;
@@ -12,6 +13,7 @@ use Illuminate\Database\QueryException;
 use App\Notifications\CommentRemovedByAdminNotification;
 use App\Notifications\PostApprovedNotification;
 use App\Notifications\PostRemovedByAdminNotification;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -38,24 +40,86 @@ class AdminController extends Controller
     }
 
     // Получить статистику для дашборда
-    public function getStats(): JsonResponse
+    public function getStats(Request $request): JsonResponse
     {
         try {
+            [$from, $to] = $this->resolveReportPeriod($request->input('period'));
+
+            $userBase = User::withTrashed();
+            $postBase = Post::withTrashed();
+            $commentBase = Comment::withTrashed();
+
+            if ($from && $to) {
+                $userBase->whereBetween('created_at', [$from, $to]);
+                $postBase->whereBetween('created_at', [$from, $to]);
+                $commentBase->whereBetween('created_at', [$from, $to]);
+            }
+
             $stats = [
-                'total_users' => User::withTrashed()->count(),
-                'active_users' => User::count(),
-                'deleted_users' => User::onlyTrashed()->count(),
-                'total_posts' => Post::withTrashed()->count(),
-                'active_posts' => Post::count(),
-                'deleted_posts' => Post::onlyTrashed()->count(),
-                'total_comments' => Comment::withTrashed()->count(),
-                'active_comments' => Comment::count(),
-                'deleted_comments' => Comment::onlyTrashed()->count(),
+                'period' => $request->input('period', 'all'),
+                'period_from' => $from?->toIso8601String(),
+                'period_to' => $to?->toIso8601String(),
+                'total_users' => (clone $userBase)->count(),
+                'active_users' => (clone $userBase)->whereNull('deleted_at')->count(),
+                'deleted_users' => (clone $userBase)->whereNotNull('deleted_at')->count(),
+                'total_posts' => (clone $postBase)->count(),
+                'active_posts' => (clone $postBase)->whereNull('deleted_at')->count(),
+                'deleted_posts' => (clone $postBase)->whereNotNull('deleted_at')->count(),
+                'total_comments' => (clone $commentBase)->count(),
+                'active_comments' => (clone $commentBase)->whereNull('deleted_at')->count(),
+                'deleted_comments' => (clone $commentBase)->whereNotNull('deleted_at')->count(),
             ];
-            
+
             return response()->json($stats);
         } catch (\Exception $e) {
             Log::error('Admin stats error: ' . $e->getMessage());
+            return response()->json(['message' => 'Ошибка при загрузке статистики'], 500);
+        }
+    }
+
+    public function usersStats(): JsonResponse
+    {
+        try {
+            return response()->json([
+                'active' => User::query()->whereNull('deleted_at')->where('is_banned', false)->count(),
+                'banned' => User::query()->whereNull('deleted_at')->where('is_banned', true)->count(),
+                'deleted' => User::onlyTrashed()->count(),
+                'total' => User::withTrashed()->count(),
+                'deleted_last_30_days' => User::onlyTrashed()
+                    ->where('deleted_at', '>=', now()->subDays(30))
+                    ->count(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Admin usersStats error: '.$e->getMessage());
+
+            return response()->json(['message' => 'Ошибка при загрузке статистики'], 500);
+        }
+    }
+
+    public function postsStats(): JsonResponse
+    {
+        try {
+            return response()->json([
+                'pending' => Post::query()
+                    ->where('moderation_status', 'pending')
+                    ->whereNull('deleted_at')
+                    ->count(),
+                'approved' => Post::query()
+                    ->where('moderation_status', 'approved')
+                    ->whereNull('deleted_at')
+                    ->count(),
+                'rejected' => Post::query()
+                    ->where('moderation_status', 'rejected')
+                    ->whereNull('deleted_at')
+                    ->count(),
+                'total' => Post::withTrashed()->count(),
+                'deleted_last_30_days' => Post::onlyTrashed()
+                    ->where('deleted_at', '>=', now()->subDays(30))
+                    ->count(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Admin postsStats error: '.$e->getMessage());
+
             return response()->json(['message' => 'Ошибка при загрузке статистики'], 500);
         }
     }
@@ -143,7 +207,7 @@ class AdminController extends Controller
     public function getTags(): JsonResponse
     {
         try {
-            $counts = [];
+            $merged = [];
             $rows = Post::withTrashed()
                 ->whereNotNull('tags')
                 ->where('tags', '!=', '')
@@ -151,17 +215,15 @@ class AdminController extends Controller
 
             foreach ($rows as $value) {
                 foreach ($this->normalizePostTags($value) as $tag) {
-                    $counts[$tag] = ($counts[$tag] ?? 0) + 1;
+                    $key = mb_strtolower($tag);
+                    if (! isset($merged[$key])) {
+                        $merged[$key] = ['name' => $tag, 'posts_count' => 0];
+                    }
+                    $merged[$key]['posts_count']++;
                 }
             }
 
-            $tags = [];
-            foreach ($counts as $name => $postsCount) {
-                $tags[] = [
-                    'name' => $name,
-                    'posts_count' => $postsCount,
-                ];
-            }
+            $tags = array_values($merged);
 
             usort($tags, fn ($a, $b) => strcasecmp($a['name'], $b['name']));
 
@@ -195,13 +257,15 @@ class AdminController extends Controller
                 ->chunkById(100, function ($posts) use ($tag, &$updated) {
                     foreach ($posts as $post) {
                         $tags = $this->normalizePostTags($post->tags);
-                        if (!in_array($tag, $tags, true)) {
-                            continue;
-                        }
+                        $needle = mb_strtolower($tag);
                         $newTags = array_values(array_filter(
                             $tags,
-                            fn (string $t) => $t !== $tag
+                            fn (string $t) => mb_strtolower($t) !== $needle
                         ));
+                        if (count($newTags) === count($tags)) {
+                            continue;
+                        }
+                        $newTags = PostTags::normalizeForStorage($newTags);
                         $post->tags = $newTags;
                         $post->save();
                         $updated++;
@@ -228,23 +292,7 @@ class AdminController extends Controller
      */
     private function normalizePostTags($value): array
     {
-        if (is_array($value)) {
-            $tags = $value;
-        } elseif (is_string($value)) {
-            $decoded = json_decode($value, true);
-            if (is_array($decoded)) {
-                $tags = $decoded;
-            } else {
-                $tags = array_map('trim', explode(',', $value));
-            }
-        } else {
-            return [];
-        }
-
-        return array_values(array_unique(array_filter(
-            array_map(static fn ($t) => trim((string) $t), $tags),
-            static fn (string $t) => $t !== ''
-        )));
+        return PostTags::parse($value);
     }
 
     // Получить всех пользователей (включая удаленных)
@@ -507,9 +555,17 @@ class AdminController extends Controller
             }
             
             $perPage = $this->clampPerPage($request);
-            $posts = $query->orderBy('created_at', 'desc')->paginate($perPage);
+            $sortDir = ($request->input('status') === 'pending') ? 'asc' : 'desc';
+            $posts = $query->orderBy('created_at', $sortDir)->paginate($perPage);
             $posts->getCollection()->transform(function ($post) {
                 $post->setAttribute('author_deleted', (bool) optional($post->author)->deleted_at);
+                $isPending = ($post->moderation_status ?? '') === 'pending' && $post->deleted_at === null;
+                $post->setAttribute(
+                    'moderation_overdue',
+                    $isPending
+                        && $post->created_at
+                        && $post->created_at->lt(now()->subDays(30))
+                );
                 return $post;
             });
             
@@ -677,13 +733,9 @@ class AdminController extends Controller
                 }
             ])->withTrashed();
             
-            // Фильтрация по статусу модерации
+            // Фильтрация по статусу
             if ($request->has('status')) {
                 switch ($request->status) {
-                    case 'pending':
-                        $query->where('comments.moderation_status', 'pending')
-                              ->whereNull('comments.deleted_at');
-                        break;
                     case 'approved':
                         $query->where('comments.moderation_status', 'approved')
                               ->whereNull('comments.deleted_at');
@@ -691,9 +743,13 @@ class AdminController extends Controller
                     case 'deleted':
                         $query->whereNotNull('comments.deleted_at');
                         break;
+                    case 'hidden':
+                        $query->whereNotNull('comments.deleted_at')
+                              ->where('comments.auto_moderation_passed', false);
+                        break;
                 }
             }
-            
+
             // Поиск по содержимому
             if ($request->has('search')) {
                 $search = $request->search;
@@ -835,39 +891,23 @@ class AdminController extends Controller
     }
 
     //Генерация полного отчета о системе
-    public function generateReport()
+    public function generateReport(Request $request)
     {
         try {
-            $stats = [
-                'total_users' => User::count(),
-                'active_users' => User::whereNull('deleted_at')->count(),
-                'deleted_users' => User::onlyTrashed()->count(),
-                'banned_users' => User::whereNull('deleted_at')->where('is_banned', true)->count(),
-                'total_posts' => Post::count(),
-                'active_posts' => Post::whereNull('deleted_at')->count(),
-                'deleted_posts' => Post::onlyTrashed()->count(),
-                'draft_posts' => Post::whereNull('deleted_at')->where('is_draft', true)->count(),
-                'pending_posts' => Post::whereNull('deleted_at')->where('moderation_status', 'pending')->count(),
-                'rejected_posts' => Post::whereNull('deleted_at')->where('moderation_status', 'rejected')->count(),
-                'approved_posts' => Post::whereNull('deleted_at')->where('is_draft', false)->where('moderation_status', 'approved')->count(),
-                'total_comments' => Comment::count(),
-                'active_comments' => Comment::whereNull('deleted_at')->count(),
-                'deleted_comments' => Comment::onlyTrashed()->count(),
-                'pending_comments' => Comment::whereNull('deleted_at')->where('moderation_status', 'pending')->count(),
-                'rejected_comments' => Comment::whereNull('deleted_at')->where('moderation_status', 'rejected')->count(),
-            ];
+            $periodKey = (string) $request->input('period', 'all');
+            [$from, $to] = $this->resolveReportPeriod($periodKey);
+            $periodLabel = $this->reportPeriodLabelRu($periodKey);
 
-            $users = User::withTrashed()->with('roles')->get();
-            $posts = Post::withTrashed()
+            $usersQuery = User::withTrashed()->with('roles');
+            $postsQuery = Post::withTrashed()
                 ->with([
                     'author' => function ($q) {
                         $q->withTrashed();
                     },
                     'category:id,name',
                 ])
-                ->withCount(['likes', 'comments'])
-                ->get();
-            $comments = Comment::withTrashed()
+                ->withCount(['likes', 'comments']);
+            $commentsQuery = Comment::withTrashed()
                 ->with([
                     'author' => function ($q) {
                         $q->withTrashed();
@@ -875,12 +915,44 @@ class AdminController extends Controller
                     'post' => function ($q) {
                         $q->withTrashed();
                     },
-                ])
-                ->get();
+                ]);
+
+            if ($from && $to) {
+                $usersQuery->whereBetween('created_at', [$from, $to]);
+                $postsQuery->whereBetween('created_at', [$from, $to]);
+                $commentsQuery->whereBetween('created_at', [$from, $to]);
+            }
+
+            $users = $usersQuery->get();
+            $posts = $postsQuery->get();
+            $comments = $commentsQuery->get();
+
+            $stats = [
+                'report_period' => $periodLabel,
+                'period_is_filtered' => $from !== null,
+                'period_from' => $from?->format('d.m.Y H:i'),
+                'period_to' => $to?->format('d.m.Y H:i'),
+                'total_users' => $users->count(),
+                'active_users' => $users->whereNull('deleted_at')->count(),
+                'deleted_users' => $users->whereNotNull('deleted_at')->count(),
+                'banned_users' => $users->whereNull('deleted_at')->where('is_banned', true)->count(),
+                'total_posts' => $posts->count(),
+                'active_posts' => $posts->whereNull('deleted_at')->count(),
+                'deleted_posts' => $posts->whereNotNull('deleted_at')->count(),
+                'draft_posts' => $posts->whereNull('deleted_at')->where('is_draft', true)->count(),
+                'pending_posts' => $posts->whereNull('deleted_at')->where('moderation_status', 'pending')->count(),
+                'rejected_posts' => $posts->whereNull('deleted_at')->where('moderation_status', 'rejected')->count(),
+                'approved_posts' => $posts->whereNull('deleted_at')->where('is_draft', false)->where('moderation_status', 'approved')->count(),
+                'total_comments' => $comments->count(),
+                'active_comments' => $comments->whereNull('deleted_at')->count(),
+                'deleted_comments' => $comments->whereNotNull('deleted_at')->count(),
+                'pending_comments' => $comments->whereNull('deleted_at')->where('moderation_status', 'pending')->count(),
+                'rejected_comments' => $comments->whereNull('deleted_at')->where('moderation_status', 'rejected')->count(),
+            ];
 
             $csv = (new AdminReportCsvBuilder())->build($stats, $users, $posts, $comments);
 
-            $filename = 'report_' . now()->format('Y-m-d_H-i-s') . '.csv';
+            $filename = 'отчет_' . $this->reportPeriodFilenamePart($periodKey) . '_' . now()->format('Y-m-d_H-i-s') . '.csv';
 
             return response($csv, 200)
                 ->header('Content-Type', 'text/csv; charset=UTF-8')
@@ -890,5 +962,59 @@ class AdminController extends Controller
             Log::error('Admin generateReport error: ' . $e->getMessage());
             return response()->json(['message' => 'Ошибка при генерации отчета'], 500);
         }
+    }
+
+    private function reportPeriodLabelRu(?string $period): string
+    {
+        $period = $period ? trim($period) : 'all';
+
+        return match ($period) {
+            'week' => 'За неделю',
+            'month' => 'За месяц',
+            'quarter' => 'За квартал',
+            'year' => 'За год',
+            default => 'За всё время',
+        };
+    }
+
+    private function reportPeriodFilenamePart(?string $period): string
+    {
+        $period = $period ? trim($period) : 'all';
+
+        return match ($period) {
+            'week' => 'za-nedelyu',
+            'month' => 'za-mesyac',
+            'quarter' => 'za-kvartal',
+            'year' => 'za-god',
+            default => 'za-vse-vremya',
+        };
+    }
+
+    /**
+     * @return array{0: ?Carbon, 1: ?Carbon}
+     */
+    private function resolveReportPeriod(?string $period): array
+    {
+        $period = $period ? trim($period) : 'all';
+
+        if ($period === '' || $period === 'all') {
+            return [null, null];
+        }
+
+        $to = now();
+
+        $from = match ($period) {
+            'week' => $to->copy()->subWeek(),
+            'month' => $to->copy()->subMonth(),
+            'quarter' => $to->copy()->subMonths(3),
+            'year' => $to->copy()->subYear(),
+            default => null,
+        };
+
+        if ($from === null) {
+            return [null, null];
+        }
+
+        return [$from, $to];
     }
 }

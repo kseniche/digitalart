@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\UpdatePasswordRequest;
 use App\Models\User;
 use App\Rules\PersonNameLetters;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -22,8 +23,8 @@ class AuthController extends Controller
             'email' => 'required|email',
             'password' => 'required|string',
         ], [
-            'email.required' => 'Email обязателен',
-            'email.email' => 'Некорректный формат email',
+            'email.required' => 'Укажите электронную почту',
+            'email.email' => 'Некорректный формат электронной почты',
             'password.required' => 'Пароль обязателен',
         ]);
 
@@ -60,7 +61,7 @@ class AuthController extends Controller
         }
 
         return response()->json([
-            'message' => 'Неверный email или пароль'
+            'message' => 'Неверная электронная почта или пароль'
         ], 401);
     }
 
@@ -79,19 +80,22 @@ class AuthController extends Controller
             'email' => 'required|string|email|max:255|unique:users,email',
             'password' => 'required|string|min:8',
             'passwordConfirmation' => 'required|string|min:8|same:password',
+            'accept_terms' => 'required|accepted',
         ], [
             'firstName.required' => 'Имя обязательно',
             'lastName.required' => 'Фамилия обязательна',
             'username.required' => 'Логин обязателен',
             'username.unique' => 'Пользователь с таким логином уже существует',
-            'email.required' => 'Email обязателен',
-            'email.email' => 'Некорректный формат email',
-            'email.unique' => 'Пользователь с таким email уже существует',
+            'email.required' => 'Укажите электронную почту',
+            'email.email' => 'Некорректный формат электронной почты',
+            'email.unique' => 'Пользователь с такой электронной почтой уже существует',
             'password.required' => 'Пароль обязателен',
             'password.min' => 'Пароль должен содержать минимум 8 символов',
             'passwordConfirmation.required' => 'Подтверждение пароля обязательно',
             'passwordConfirmation.min' => 'Подтверждение пароля должно содержать минимум 8 символов',
             'passwordConfirmation.same' => 'Пароли не совпадают',
+            'accept_terms.accepted' => 'Необходимо принять пользовательское соглашение и правила сообщества',
+            'accept_terms.required' => 'Необходимо принять пользовательское соглашение и правила сообщества',
         ]);
 
         if ($validator->fails()) {
@@ -107,6 +111,7 @@ class AuthController extends Controller
             'username' => $request->username,
             'email' => $normalized['email'],
             'password' => Hash::make($request->password),
+            'terms_accepted_at' => now(),
         ]);
         Role::firstOrCreate(['name' => 'user']);
         $user->assignRole('user');
@@ -123,6 +128,8 @@ class AuthController extends Controller
                 'username' => $user->username,
                 'email' => $user->email,
                 'avatar' => $user->avatar,
+                'terms_accepted_at' => $user->terms_accepted_at?->toIso8601String(),
+                'comment_rules_accepted_at' => $user->comment_rules_accepted_at?->toIso8601String(),
             ],
             'token' => $token
         ], 201);
@@ -137,8 +144,8 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
         ], [
-            'email.required' => 'Email обязателен',
-            'email.email' => 'Некорректный формат email',
+            'email.required' => 'Укажите электронную почту',
+            'email.email' => 'Некорректный формат электронной почты',
         ]);
 
         if ($validator->fails()) {
@@ -167,8 +174,8 @@ class AuthController extends Controller
             'password' => 'required|string|min:8|confirmed',
         ], [
             'token.required' => 'Токен обязателен',
-            'email.required' => 'Email обязателен',
-            'email.email' => 'Некорректный формат email',
+            'email.required' => 'Укажите электронную почту',
+            'email.email' => 'Некорректный формат электронной почты',
             'password.required' => 'Новый пароль обязателен',
             'password.min' => 'Новый пароль должен содержать минимум 8 символов',
             'password.confirmed' => 'Подтверждение нового пароля не совпадает',
@@ -248,6 +255,29 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Пароль успешно изменен',
+        ]);
+    }
+
+    /**
+     * Принятие правил комментариев (первый комментарий).
+     */
+    public function acceptCommentRules(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user->comment_rules_accepted_at) {
+            return response()->json([
+                'message' => 'Правила комментариев уже приняты',
+                'comment_rules_accepted_at' => $user->comment_rules_accepted_at->toIso8601String(),
+            ]);
+        }
+
+        $user->update(['comment_rules_accepted_at' => now()]);
+        $user->refresh();
+
+        return response()->json([
+            'message' => 'Правила комментариев приняты',
+            'comment_rules_accepted_at' => $user->comment_rules_accepted_at->toIso8601String(),
         ]);
     }
 }

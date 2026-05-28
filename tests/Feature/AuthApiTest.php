@@ -25,6 +25,7 @@ class AuthApiTest extends TestCase
             'email' => 'newuser@example.com',
             'password' => 'password123',
             'passwordConfirmation' => 'password123',
+            'accept_terms' => true,
         ];
 
         $response = $this->postJson('/api/register', $userData);
@@ -42,6 +43,7 @@ class AuthApiTest extends TestCase
         $this->assertDatabaseHas('roles', ['name' => 'user']);
         $createdUser = User::where('email', 'newuser@example.com')->firstOrFail();
         $this->assertTrue($createdUser->hasRole('user'));
+        $this->assertNotNull($createdUser->terms_accepted_at);
     }
 
     /** Scenario 6: Exceptional — validation error. Регистрация с невалидными данными (422). */
@@ -82,6 +84,7 @@ class AuthApiTest extends TestCase
             'email' => 'jp.obrien@example.com',
             'password' => 'password123',
             'passwordConfirmation' => 'password123',
+            'accept_terms' => true,
         ]);
 
         $response->assertStatus(201);
@@ -101,6 +104,7 @@ class AuthApiTest extends TestCase
             'email' => 'anna.vdb@example.com',
             'password' => 'password123',
             'passwordConfirmation' => 'password123',
+            'accept_terms' => true,
         ]);
 
         $response->assertStatus(201);
@@ -119,6 +123,7 @@ class AuthApiTest extends TestCase
             'email' => 'maria.dangelo@example.com',
             'password' => 'password123',
             'passwordConfirmation' => 'password123',
+            'accept_terms' => true,
         ]);
 
         $response->assertStatus(201);
@@ -138,6 +143,7 @@ class AuthApiTest extends TestCase
             'email' => 'shortpass@example.com',
             'password' => '1234567',
             'passwordConfirmation' => '1234567',
+            'accept_terms' => true,
         ]);
 
         $response->assertStatus(422)
@@ -158,6 +164,7 @@ class AuthApiTest extends TestCase
             'email' => 'existing@example.com',
             'password' => 'password123',
             'passwordConfirmation' => 'password123',
+            'accept_terms' => true,
         ]);
 
         $response->assertStatus(422)
@@ -173,6 +180,7 @@ class AuthApiTest extends TestCase
             'email' => '  MiXeD.User@Example.COM  ',
             'password' => 'password123',
             'passwordConfirmation' => 'password123',
+            'accept_terms' => true,
         ]);
 
         $response->assertStatus(201);
@@ -195,10 +203,43 @@ class AuthApiTest extends TestCase
             'email' => 'DuPliCate@Example.com',
             'password' => 'password123',
             'passwordConfirmation' => 'password123',
+            'accept_terms' => true,
         ]);
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['email']);
+    }
+
+    public function test_registration_requires_terms_acceptance(): void
+    {
+        $response = $this->postJson('/api/register', [
+            'firstName' => 'Тест',
+            'lastName' => 'Согласие',
+            'username' => 'no_terms_user',
+            'email' => 'no_terms@example.com',
+            'password' => 'password123',
+            'passwordConfirmation' => 'password123',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['accept_terms']);
+    }
+
+    public function test_user_can_accept_comment_rules(): void
+    {
+        $user = User::factory()->create([
+            'comment_rules_accepted_at' => null,
+        ]);
+        $token = $user->createToken('test-token')->plainTextToken;
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson('/api/user/accept-comment-rules');
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['comment_rules_accepted_at']);
+
+        $user->refresh();
+        $this->assertNotNull($user->comment_rules_accepted_at);
     }
 
     /** Scenario 2: User authorization. Успешный вход пользователя. POST /api/login */

@@ -52,6 +52,30 @@ class PostTags
         ));
     }
 
+    /**
+     * Нормализация списка тегов при сохранении: trim, без пустых, без дублей (без учёта регистра).
+     * Сохраняется написание первого вхождения.
+     *
+     * @return list<string>
+     */
+    public static function normalizeForStorage(mixed $value): array
+    {
+        $tags = self::parse($value);
+        $seen = [];
+        $result = [];
+
+        foreach ($tags as $tag) {
+            $key = mb_strtolower($tag);
+            if ($key === '' || isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $result[] = $tag;
+        }
+
+        return array_values($result);
+    }
+
     public static function anyContainsSubstring(array $tags, string $needle): bool
     {
         $needle = mb_strtolower(trim($needle));

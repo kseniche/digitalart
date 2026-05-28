@@ -53,7 +53,14 @@ class ProfileController extends Controller
                 'country' => $user->country ?? '',
                 'followers_count' => $user->followers_count,
                 'following_count' => $user->following_count,
-                'posts_count' => $user->posts_count,
+                'posts_count' => Post::query()
+                    ->where('user_id', $user->id)
+                    ->where('is_draft', false)
+                    ->where('moderation_status', 'approved')
+                    ->where(function ($q) {
+                        $q->whereNull('published_at')->orWhere('published_at', '<=', now());
+                    })
+                    ->count(),
                 'is_following' => $isFollowing,
                 'is_banned' => (bool) $user->is_banned,
                 'posts' => $posts->items(),

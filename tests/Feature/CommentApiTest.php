@@ -80,6 +80,29 @@ class CommentApiTest extends TestCase
         ]);
     }
 
+    public function test_comment_requires_accepted_comment_rules(): void
+    {
+        $postOwner = User::factory()->create();
+        $author = User::factory()->create([
+            'comment_rules_accepted_at' => null,
+        ]);
+        $post = Post::factory()->create([
+            'user_id' => $postOwner->id,
+            'moderation_status' => 'approved',
+            'is_draft' => false,
+            'published_at' => now()->subMinute(),
+        ]);
+        $token = $author->createToken('test-token')->plainTextToken;
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson("/api/posts/{$post->id}/comments", [
+                'content' => 'Комментарий без принятия правил',
+            ]);
+
+        $response->assertStatus(403)
+            ->assertJsonPath('code', 'comment_rules_not_accepted');
+    }
+
     public function test_deleting_approved_comment_decrements_post_comment_count(): void
     {
         $author = User::factory()->create();

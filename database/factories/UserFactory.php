@@ -34,6 +34,8 @@ class UserFactory extends Factory
             'phone' => fake()->phoneNumber(),
             'country' => fake()->country(),
             'bio' => fake()->sentence(10),
+            'terms_accepted_at' => now(),
+            'comment_rules_accepted_at' => now(),
         ];
     }
 

@@ -27,6 +27,8 @@ class User extends Authenticatable
         'is_banned',
         'ban_reason',
         'email_notifications_enabled',
+        'terms_accepted_at',
+        'comment_rules_accepted_at',
     ];
 
     protected $hidden = [
@@ -49,6 +51,8 @@ class User extends Authenticatable
             'password' => 'hashed',
             'is_banned' => 'boolean',
             'email_notifications_enabled' => 'boolean',
+            'terms_accepted_at' => 'datetime',
+            'comment_rules_accepted_at' => 'datetime',
         ];
     }
 
@@ -145,7 +149,21 @@ class User extends Authenticatable
         if (array_key_exists('posts_count', $this->attributes)) {
             return $this->attributes['posts_count'];
         }
-        return $this->posts()->count();
+
+        return $this->publishedPosts()->count();
+    }
+
+    /**
+     * Опубликованные работы в портфолио (как в ProfileController).
+     */
+    public function publishedPosts()
+    {
+        return $this->posts()
+            ->where('is_draft', false)
+            ->where('moderation_status', 'approved')
+            ->where(function ($q) {
+                $q->whereNull('published_at')->orWhere('published_at', '<=', now());
+            });
     }
 
     public function getFullNameAttribute(): string

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import MediaPreview from './common/MediaPreview';
 import { useMasonryRelayout } from './common/MasonryGrid';
 
-function MasonryRecommendationCard({ post }) {
+function MasonryRecommendationCard({ post, linkState }) {
   const scheduleRelayout = useMasonryRelayout();
   const authorName = post.author
     ? `${post.author.name || ''} ${post.author.user_surname || ''}`.trim() || 'Автор'
@@ -16,7 +16,7 @@ function MasonryRecommendationCard({ post }) {
   return (
     <article className="masonry-card">
       <div className="masonry-card__media">
-        <Link to={`/post/${post.id}`} className="masonry-card__media-link">
+        <Link to={`/post/${post.id}`} state={linkState} className="masonry-card__media-link">
           <MediaPreview
             src={image}
             mediaType={mediaType}
@@ -28,7 +28,7 @@ function MasonryRecommendationCard({ post }) {
       </div>
       <div className="card-info">
         <h3 className="card-title">
-          <Link to={`/post/${post.id}`} className="link-reset">
+          <Link to={`/post/${post.id}`} state={linkState} className="link-reset">
             {title}
           </Link>
         </h3>

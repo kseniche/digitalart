@@ -1,15 +1,19 @@
 import React, { memo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { getReturnState } from '../utils/navigation';
 import MediaPreview from './common/MediaPreview';
 import { useMasonryRelayout } from './common/MasonryGrid';
 
 function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
+  const location = useLocation();
+  const linkState = getReturnState(location);
+  const profileLinkState = { from: `${location.pathname}${location.search}` || '/' };
   const scheduleRelayout = useMasonryRelayout();
   return (
     <article className="masonry-card">
       <div className="masonry-card__media">
         {isAuthenticated ? (
-          <Link to={`/post/${post.id}`} className="masonry-card__media-link">
+          <Link to={`/post/${post.id}`} state={linkState} className="masonry-card__media-link">
             <MediaPreview
               src={post.image}
               mediaType={post.mediaType}
@@ -40,7 +44,7 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
       <div className="card-info">
         <h3 className="card-title">
           {isAuthenticated ? (
-            <Link to={`/post/${post.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+            <Link to={`/post/${post.id}`} state={linkState} style={{ textDecoration: 'none', color: 'inherit' }}>
               {post.title}
             </Link>
           ) : (
@@ -51,7 +55,7 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
         </h3>
         <div className="card-author">
           {isAuthenticated ? (
-            <Link to={`/profile/${post.author.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+            <Link to={`/profile/${post.author.id}`} state={profileLinkState} style={{ textDecoration: 'none', color: 'inherit' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <img
                   src={post.author.avatar}
