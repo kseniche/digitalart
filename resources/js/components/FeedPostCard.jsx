@@ -9,9 +9,10 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
   const linkState = getReturnState(location);
   const profileLinkState = { from: `${location.pathname}${location.search}` || '/' };
   const scheduleRelayout = useMasonryRelayout();
-  return (
-    <article className="masonry-card">
-      <div className="masonry-card__media">
+
+  const card = (
+    <article className="masonry-card profile-post-card">
+      <div className="masonry-card__media profile-post-media">
         {isAuthenticated ? (
           <Link to={`/post/${post.id}`} state={linkState} className="masonry-card__media-link">
             <MediaPreview
@@ -76,6 +77,12 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
         </div>
       </div>
     </article>
+  );
+
+  return (
+    <div className="masonry-item feed-post-item">
+      {card}
+    </div>
   );
 }
 

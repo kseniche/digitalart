@@ -614,7 +614,8 @@ code {
   background-clip: padding-box;
 }
 
-.masonry-feed_column > * {
+.masonry-feed_column > .masonry-item,
+.masonry-feed_column > .profile-post-link {
   width: 100%;
   margin-bottom: var(--masonry-gap);
   break-inside: avoid;
@@ -625,6 +626,11 @@ code {
   width: 100%;
   text-decoration: none;
   color: inherit;
+  box-sizing: border-box;
+}
+
+.feed-post-item {
+  cursor: default;
 }
 
 .masonry-card {
