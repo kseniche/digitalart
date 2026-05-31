@@ -2,17 +2,22 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Models\Comment;
 use App\Models\Post;
+use App\Notifications\CommentPublishedNotification;
+use App\Notifications\NewCommentNotification;
 use App\Services\AutoModerationService;
+use App\Services\UserNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class CommentController extends Controller
 {
     public function __construct(
-        private readonly AutoModerationService $autoModerationService
+        private readonly AutoModerationService $autoModerationService,
+        private readonly UserNotificationService $userNotifications,
     ) {}
 
     public function store(Request $request, Post $post)
@@ -64,11 +69,35 @@ class CommentController extends Controller
             // Загружаем автора с аватаром
             $comment->load('author:id,name,user_surname,avatar');
 
-            // Email-уведомление владельцу поста (не отправляем, если комментатор — автор поста)
-            if ($post->user_id !== $request->user()->id) {
+            $author = $request->user();
+            if ($autoModerationPassed) {
+                $this->userNotifications->notify(
+                    $author,
+                    UserNotificationType::CommentPublished,
+                    [
+                        'title' => $post->post_title ?? 'Публикация',
+                        'post_id' => (string) $post->id,
+                    ],
+                    new CommentPublishedNotification($comment),
+                    ['comment_id' => $comment->id, 'post_id' => $post->id]
+                );
+            }
+
+            if ($autoModerationPassed && $post->user_id !== $request->user()->id) {
                 $post->load('author');
-                if ($post->author && !empty($post->author->email)) {
-                    $post->author->notify(new \App\Notifications\NewCommentNotification($comment));
+                if ($post->author) {
+                    $authorName = trim($author->name.' '.($author->user_surname ?? ''));
+                    $this->userNotifications->notify(
+                        $post->author,
+                        UserNotificationType::CommentOnYourPost,
+                        [
+                            'author_name' => $authorName !== '' ? $authorName : 'Пользователь',
+                            'title' => $post->post_title ?? 'Публикация',
+                            'post_id' => (string) $post->id,
+                        ],
+                        new NewCommentNotification($comment),
+                        ['comment_id' => $comment->id, 'post_id' => $post->id]
+                    );
                 }
             }
 
@@ -84,6 +113,7 @@ class CommentController extends Controller
                         'name' => $comment->author->name,
                         'surname' => $comment->author->user_surname,
                         'avatar' => $comment->author->avatar,
+                        'avatar_url' => $comment->author->avatar_url,
                     ],
                     'created_at' => $comment->created_at,
                     'auto_moderation_passed' => $autoModerationPassed,
@@ -116,6 +146,20 @@ class CommentController extends Controller
             if ($wasApproved && $post && $post->comment_count > 0) {
                 $post->decrement('comment_count');
             }
+
+            $comment->loadMissing('post');
+            $this->userNotifications->notify(
+                $request->user(),
+                UserNotificationType::CommentDeleted,
+                [
+                    'delete_context' => 'Вы удалили свой комментарий.',
+                    'title' => $comment->post?->post_title ?? 'Публикация',
+                    'post_id' => (string) ($comment->post_id ?? ''),
+                    'reason' => '',
+                ],
+                null,
+                ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
+            );
 
             return response()->json([
                 'message' => 'Комментарий удален'

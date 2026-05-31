@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { apiFetch } from '../api';
+import { apiFetchLocal as apiFetch } from '../api';
 import {
   formatPhoneMask,
   normalizePhoneStorage,
@@ -15,7 +15,14 @@ import {
 } from '../utils/profileFields';
 import DeleteProfileModal from './modals/DeleteProfileModal';
 import Alert from './common/Alert';
+import CharCounter from './common/CharCounter';
+import CountryAutocomplete from './common/CountryAutocomplete';
+import { FIELD_LIMITS } from '../constants/fieldLimits';
+import { mapApiValidationErrors } from '../utils/apiValidation';
+import { validateMaxLength } from '../utils/fieldValidation';
 import '../../css/app.css';
+
+const PROFILE_LIMITS = FIELD_LIMITS.profile;
 
 /** Согласовано с App\Rules\PersonNameLetters */
 const PERSON_NAME_LETTERS_RE = /^[\p{L}]+(?:[ \u0027\u2019\-][\p{L}]+)*$/u;
@@ -31,6 +38,7 @@ function Settings() {
     email: '',
     email_notifications_enabled: true,
     country: '',
+    country_id: null,
     website: '',
     bio: '',
     phone: '',
@@ -77,6 +85,7 @@ function Settings() {
                 ? data.email_notifications_enabled
                 : true,
             country: data.country || '',
+            country_id: data.country_id ?? null,
             website: data.website || '',
             bio: data.bio || '',
             phone: data.phone ? formatPhoneMask(data.phone) : '',
@@ -86,9 +95,7 @@ function Settings() {
           setAvatarPreview(next.avatar);
         }
       } catch (e) {
-        const msg = 'Не удалось загрузить данные профиля';
-        setError(msg);
-        toast.error(msg);
+        setError('Не удалось загрузить данные профиля');
       }
     })();
   }, [isAuthenticated, navigate, user]);
@@ -174,11 +181,22 @@ function Settings() {
       errors.user_surname = "Фамилия может содержать только буквы; части разделяйте пробелом, дефисом или апострофом (например, Салтыков-Щедрин, О'Коннор)";
     }
 
+    const bioMax = validateMaxLength(form.bio, PROFILE_LIMITS.bio.max, 'О себе');
+    if (bioMax) errors.bio = bioMax;
+    const nameMax = validateMaxLength(form.name, PROFILE_LIMITS.name.max, 'Имя');
+    if (nameMax) errors.name = nameMax;
+    const surnameMax = validateMaxLength(form.user_surname, PROFILE_LIMITS.userSurname.max, 'Фамилия');
+    if (surnameMax) errors.user_surname = surnameMax;
+    const usernameMax = validateMaxLength(form.username, PROFILE_LIMITS.username.max, 'Никнейм');
+    if (usernameMax) errors.username = usernameMax;
+    const emailMax = validateMaxLength(form.email, PROFILE_LIMITS.email.max, 'Электронная почта');
+    if (emailMax) errors.email = emailMax;
+    const websiteMax = validateMaxLength(form.website, PROFILE_LIMITS.website.max, 'Веб-сайт');
+    if (websiteMax) errors.website = websiteMax;
+
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      const msg = 'Пожалуйста, исправьте ошибки в форме';
-      setError(msg);
-      toast.error(msg);
+      setError('Пожалуйста, исправьте ошибки в форме');
       return;
     }
 
@@ -187,7 +205,7 @@ function Settings() {
       
       // Создаем объект с данными
       const data = {
-        country: form.country || '',
+        ...(form.country_id ? { country_id: form.country_id } : { country: form.country || '' }),
         website: form.website ? normalizeWebsiteUrl(form.website) : '',
         bio: form.bio || '',
         name: form.name || '',
@@ -215,18 +233,12 @@ function Settings() {
           const errorData = JSON.parse(errorText);
           errorMessage = errorData.message || errorMessage;
           if (res.status === 422 && errorData.errors && typeof errorData.errors === 'object') {
-            const flat = {};
-            Object.keys(errorData.errors).forEach(key => {
-              const v = errorData.errors[key];
-              flat[key] = Array.isArray(v) ? v[0] : v;
-            });
-            setFieldErrors(flat);
+            setFieldErrors(mapApiValidationErrors(errorData.errors));
           }
         } catch (e) {
           // ignore
         }
         setError(errorMessage);
-        toast.error(errorMessage);
         setIsSaving(false);
         return;
       }
@@ -248,9 +260,7 @@ function Settings() {
         });
         
         if (!avatarRes.ok) {
-          const msg = 'Профиль обновлён, но не удалось загрузить аватар';
-          setError(msg);
-          toast.error(msg);
+          setError('Профиль обновлён, но не удалось загрузить аватар');
           return;
         }
       }
@@ -261,9 +271,7 @@ function Settings() {
       await refreshUserFromServer();
       
     } catch (e) {
-      const msg = e.message || 'Ошибка сохранения';
-      setError(msg);
-      toast.error(msg);
+      setError(e.message || 'Ошибка сохранения');
     } finally {
       setIsSaving(false);
     }
@@ -391,9 +399,7 @@ function Settings() {
       navigate('/');
       
     } catch (e) {
-      const msg = e.message || 'Ошибка удаления профиля';
-      setError(msg);
-      toast.error(msg);
+      setError(e.message || 'Ошибка удаления профиля');
       setIsDeleting(false);
       setShowDeleteConfirm(false);
     }
@@ -425,13 +431,22 @@ function Settings() {
               className="form-input" 
               value={form.name} 
               onChange={e => updateField('name', e.target.value)}
+              maxLength={PROFILE_LIMITS.name.max}
               required
             />
+            <CharCounter value={form.name} max={PROFILE_LIMITS.name.max} min={PROFILE_LIMITS.name.min} required />
             {fieldErrors.name && <div className="form-error">{fieldErrors.name}</div>}
           </div>
           <div>
             <label className="form-label">Фамилия</label>
-            <input className="form-input" value={form.user_surname} onChange={e => updateField('user_surname', e.target.value)} />
+            <input
+              className="form-input"
+              value={form.user_surname}
+              onChange={e => updateField('user_surname', e.target.value)}
+              maxLength={PROFILE_LIMITS.userSurname.max}
+            />
+            <CharCounter value={form.user_surname} max={PROFILE_LIMITS.userSurname.max} required={false} />
+            {fieldErrors.user_surname && <div className="form-error">{fieldErrors.user_surname}</div>}
           </div>
           <div>
             <label className="form-label">Никнейм</label>
@@ -440,7 +455,9 @@ function Settings() {
               value={form.username} 
               onChange={e => updateField('username', e.target.value)}
               placeholder="Минимум 3 символа"
+              maxLength={PROFILE_LIMITS.username.max}
             />
+            <CharCounter value={form.username} max={PROFILE_LIMITS.username.max} min={PROFILE_LIMITS.username.min} required={false} />
             {fieldErrors.username && <div className="form-error">{fieldErrors.username}</div>}
           </div>
           <div>
@@ -451,7 +468,9 @@ function Settings() {
               value={form.email} 
               onChange={e => updateField('email', e.target.value)}
               placeholder="example@mail.com"
+              maxLength={PROFILE_LIMITS.email.max}
             />
+            <CharCounter value={form.email} max={PROFILE_LIMITS.email.max} required={false} />
             {fieldErrors.email && <div className="form-error">{fieldErrors.email}</div>}
           </div>
           <div>
@@ -480,7 +499,18 @@ function Settings() {
           </div>
           <div>
             <label className="form-label">Страна</label>
-            <input className="form-input" value={form.country} onChange={e => updateField('country', e.target.value)} />
+            <CountryAutocomplete
+              value={form.country}
+              countryId={form.country_id}
+              onChange={({ countryId, countryName }) => {
+                setForm((prev) => ({
+                  ...prev,
+                  country: countryName,
+                  country_id: countryId,
+                }));
+              }}
+            />
+            <div className="ui-form-help">Выберите страну из списка или начните вводить название.</div>
           </div>
           <div>
             <label className="form-label">Веб-сайт</label>
@@ -495,12 +525,22 @@ function Settings() {
                 }
               }}
               placeholder="example.com"
+              maxLength={PROFILE_LIMITS.website.max}
             />
+            <CharCounter value={form.website} max={PROFILE_LIMITS.website.max} required={false} />
             {fieldErrors.website && <div className="form-error">{fieldErrors.website}</div>}
           </div>
           <div>
             <label className="form-label">О себе</label>
-            <textarea className="form-input" rows={5} value={form.bio} onChange={e => updateField('bio', e.target.value)} />
+            <textarea
+              className="form-input"
+              rows={5}
+              value={form.bio}
+              onChange={e => updateField('bio', e.target.value)}
+              maxLength={PROFILE_LIMITS.bio.max}
+            />
+            <CharCounter value={form.bio} max={PROFILE_LIMITS.bio.max} required={false} />
+            {fieldErrors.bio && <div className="form-error">{fieldErrors.bio}</div>}
           </div>
 
           {/* Кнопка и форма смены пароля */}

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Country;
 use App\Models\Post;
 use App\Models\User;
 use App\Rules\PersonNameLetters;
@@ -20,6 +21,7 @@ class ProfileController extends Controller
     public function show(User $user, Request $request)
     {
         try {
+            $user->load('countryModel');
             $currentUser = $request->user();
             $isOwner = $currentUser && $currentUser->id === $user->id;
             $posts = Post::where('user_id', $user->id)
@@ -50,7 +52,7 @@ class ProfileController extends Controller
                 'avatar' => $user->avatar_url,
                 'bio' => $user->bio ?? '',
                 'website' => $user->website ?? '',
-                'country' => $user->country ?? '',
+                'country' => $user->countryLabel(),
                 'followers_count' => $user->followers_count,
                 'following_count' => $user->following_count,
                 'posts_count' => Post::query()
@@ -71,6 +73,7 @@ class ProfileController extends Controller
             if ($isOwner) {
                 $payload['email'] = $user->email;
                 $payload['email_notifications_enabled'] = (bool) $user->email_notifications_enabled;
+                $payload['country_id'] = $user->country_id;
             }
 
             return response()->json($payload);
@@ -233,8 +236,9 @@ class ProfileController extends Controller
         }
 
         $data = $request->validate([
-            'country' => ['nullable','string','max:255'],
-            'bio' => ['nullable','string'],
+            'country_id' => ['nullable', 'integer', 'exists:countries,id'],
+            'country' => ['nullable', 'string', 'max:255'],
+            'bio' => ['nullable', 'string', 'max:'.(int) config('field_limits.profile.bio.max', 2000)],
             'name' => ['sometimes', 'required', 'string', 'max:255', new PersonNameLetters],
             'user_surname' => ['sometimes', 'nullable', 'string', 'max:255', new PersonNameLetters(allowEmpty: true)],
             'username' => [
@@ -263,6 +267,8 @@ class ProfileController extends Controller
             if (array_key_exists('website', $data)) {
                 $data['website'] = WebsiteHelper::normalize($data['website'] ?? '') ?? '';
             }
+
+            $data = $this->normalizeCountryFields($data);
 
             // Обработка загрузки аватара
             if ($request->hasFile('avatar_file')) {
@@ -295,6 +301,46 @@ class ProfileController extends Controller
             ]);
             return response()->json(['message' => 'Не удалось обновить профиль'], 500);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function normalizeCountryFields(array $data): array
+    {
+        if (array_key_exists('country_id', $data)) {
+            $countryId = $data['country_id'];
+            if ($countryId) {
+                $country = Country::query()->find($countryId);
+                $data['country'] = $country?->name_ru;
+            } else {
+                $data['country'] = null;
+            }
+
+            return $data;
+        }
+
+        if (array_key_exists('country', $data)) {
+            $name = trim((string) ($data['country'] ?? ''));
+            if ($name === '') {
+                $data['country_id'] = null;
+                $data['country'] = null;
+
+                return $data;
+            }
+
+            $country = Country::query()
+                ->whereRaw('LOWER(name_ru) = ?', [mb_strtolower($name)])
+                ->first();
+
+            if ($country) {
+                $data['country_id'] = $country->id;
+                $data['country'] = $country->name_ru;
+            }
+        }
+
+        return $data;
     }
 
     /**

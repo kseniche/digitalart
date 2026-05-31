@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 export const FEED_DEFAULT_SORT_BY = 'created_at';
 export const FEED_DEFAULT_SORT_DIR = 'desc';
@@ -36,6 +37,9 @@ export function useFeedFilters() {
 }
 
 export function FeedFiltersProvider({ children }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [searchInput, setSearchInput] = useState(defaultState.searchInput);
   const [searchQuery, setSearchQuery] = useState(defaultState.searchQuery);
   const [tagFilterInput, setTagFilterInput] = useState(defaultState.tagFilterInput);
@@ -73,7 +77,10 @@ export function FeedFiltersProvider({ children }) {
     setFiltersPanelOpen(defaultState.filtersPanelOpen);
     setFollowingOnly(defaultState.followingOnly);
     scrollRestoreRef.current = null;
-  }, []);
+    if (location.pathname === '/') {
+      navigate({ pathname: '/', search: '' }, { replace: true });
+    }
+  }, [location.pathname, navigate]);
 
   const value = useMemo(
     () => ({

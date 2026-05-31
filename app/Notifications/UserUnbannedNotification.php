@@ -2,6 +2,7 @@
 
 namespace App\Notifications;
 
+use App\Support\MailAppeal;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -25,6 +26,7 @@ class UserUnbannedNotification extends Notification
             ->greeting('Здравствуйте!')
             ->line('Ваш аккаунт был разблокирован администратором.')
             ->line('Теперь вы снова можете пользоваться сервисом.')
+            ->line(MailAppeal::supportLine())
             ->salutation('С уважением, команда проекта');
     }
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import CommentCard from './CommentCard';
 import ConfirmModal from '../modals/ConfirmModal';
@@ -7,6 +7,8 @@ import EmptyState from '../common/EmptyState';
 import Alert from '../common/Alert';
 import MediaPreview from '../common/MediaPreview';
 import AdminModerationStats from './AdminModerationStats';
+import FeedTagLink from '../common/FeedTagLink';
+import FeedCategoryLink from '../common/FeedCategoryLink';
 
 const TABS = [
   { id: 'recent', label: 'Недавно опубликованные' },
@@ -17,10 +19,18 @@ const TABS = [
 const ALL_STATUS_OPTIONS = [
   { value: 'all', label: 'Все' },
   { value: 'pending_review', label: 'На модерации' },
+  { value: 'expiring_soon', label: 'Истекает срок очереди' },
   { value: 'reviewed', label: 'Проверенные' },
   { value: 'hidden', label: 'Скрытые' },
   { value: 'with_reports', label: 'С жалобами' },
   { value: 'deleted', label: 'Удалённые' },
+  { value: 'pending_purge', label: 'Ожидают окончательного удаления' },
+  { value: 'recently_deleted', label: 'Удалены недавно' },
+];
+
+const SORT_OPTIONS = [
+  { value: 'desc', label: 'Новые сначала' },
+  { value: 'asc', label: 'Старые сначала' },
 ];
 
 function AdminComments() {
@@ -30,6 +40,7 @@ function AdminComments() {
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('recent');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [sortDir, setSortDir] = useState('desc');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -83,6 +94,7 @@ function AdminComments() {
       const params = new URLSearchParams({
         page: currentPage,
         tab,
+        sort_dir: sortDir,
         ...(tab === 'all' && statusFilter !== 'all' && { status: statusFilter }),
         ...(searchQuery && { search: searchQuery }),
       });
@@ -97,16 +109,14 @@ function AdminComments() {
       } else {
         const msg = 'Не удалось загрузить список комментариев. Попробуйте позже.';
         setError(msg);
-        toast.error(msg);
       }
     } catch {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setLoading(false);
     }
-  }, [currentPage, tab, statusFilter, searchQuery, toast]);
+  }, [currentPage, tab, statusFilter, sortDir, searchQuery, toast]);
 
   useEffect(() => {
     fetchStats();
@@ -159,12 +169,10 @@ function AdminComments() {
       } else {
         const msg = 'Не удалось загрузить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setPostDetailLoading(false);
     }
@@ -207,6 +215,21 @@ function AdminComments() {
         refreshAll();
       } else {
         toast.error('Не удалось восстановить комментарий');
+      }
+    } catch {
+      toast.error('Ошибка соединения с сервером');
+    }
+  };
+
+  const restoreComment = async (commentId) => {
+    try {
+      const response = await apiFetch(`/api/admin/comments/${commentId}/restore`, { method: 'POST' });
+      if (response.ok) {
+        toast.success('Комментарий восстановлен');
+        refreshAll();
+      } else {
+        const data = await response.json().catch(() => ({}));
+        toast.error(data?.message || 'Не удалось восстановить комментарий');
       }
     } catch {
       toast.error('Ошибка соединения с сервером');
@@ -269,7 +292,7 @@ function AdminComments() {
         <ConfirmModal
           open={confirmDeleteComment.open}
           title="Удаление комментария"
-          message="Комментарий будет удалён без возможности восстановления. Продолжить?"
+          message="Комментарий будет скрыт с сайта на 7 дней. В этот период его можно восстановить. Продолжить?"
           confirmText="Удалить"
           cancelText="Отмена"
           variant="danger"
@@ -314,9 +337,16 @@ function AdminComments() {
                 <p className="admin-detail-text">{post?.post_content || ''}</p>
                 <div className="admin-tags-row">
                   {tags.map((tag, idx) => (
-                    <span key={idx} className="admin-tag">#{String(tag).trim()}</span>
+                    <FeedTagLink key={idx} tag={String(tag).trim()} className="admin-tag" />
                   ))}
-                  {post?.category?.name && <span className="admin-tag">Категория: {post.category.name}</span>}
+                  {post?.category?.name && (
+                    <FeedCategoryLink
+                      categoryId={post.category_id}
+                      categoryName={post.category.name}
+                      className="admin-tag"
+                      prefix="Категория: "
+                    />
+                  )}
                 </div>
                 {isPendingPost && (
                   <p className="admin-detail-hint">Публикация на модерации</p>
@@ -404,7 +434,7 @@ function AdminComments() {
       <ConfirmModal
         open={confirmDelete.open}
         title="Удаление комментария"
-        message="Комментарий будет удалён без возможности восстановления. Продолжить?"
+        message="Комментарий будет скрыт с сайта на 7 дней. В этот период его можно восстановить. Продолжить?"
         confirmText="Удалить"
         cancelText="Отмена"
         variant="danger"
@@ -422,6 +452,8 @@ function AdminComments() {
           <AdminModerationStats
             items={[
               { value: stats.pending_review, label: 'На проверке' },
+              { value: stats.expiring_soon ?? 0, label: 'Истекает срок' },
+              { value: stats.pending_permanent_delete ?? 0, label: 'Ожидают purge' },
               { value: stats.reports, label: 'Жалобы' },
               { value: stats.hidden, label: 'Скрытые' },
               { value: stats.total, label: 'Всего' },
@@ -460,6 +492,22 @@ function AdminComments() {
             }}
             className="admin-search-input"
           />
+
+          <select
+            value={sortDir}
+            onChange={(e) => {
+              setSortDir(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="filter-select"
+            aria-label="Сортировка"
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
 
           {tab === 'all' && (
             <select
@@ -520,6 +568,7 @@ function AdminComments() {
                 onDeleteWithWords={deleteWithBannedWords}
                 onUnhide={unhideComment}
                 onDismissReports={dismissReports}
+                onRestore={restoreComment}
                 onOpenPost={fetchPostDetail}
               />
             ))}

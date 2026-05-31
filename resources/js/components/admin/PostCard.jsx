@@ -1,5 +1,7 @@
 import React from 'react';
 import MediaPreview from '../common/MediaPreview';
+import FeedTagLink from '../common/FeedTagLink';
+import FeedCategoryLink from '../common/FeedCategoryLink';
 
 function PostCard({ post, onAction, showView = true }) {
   const isDeleted = post.deleted_at !== null;
@@ -99,6 +101,11 @@ function PostCard({ post, onAction, showView = true }) {
             <span className="admin-status-badge admin-status-badge--rejected">Авто: не пройдено</span>
           )}
           {isDeleted && <div className="deleted-badge">Удалена</div>}
+          {post.is_pending_permanent_delete && (
+            <span className="admin-status-badge admin-status-badge--pending" title={post.purge_at ? `Окончательное удаление: ${formatDate(post.purge_at)}` : ''}>
+              Ожидает окончательного удаления ({post.days_until_purge ?? 0} дн.)
+            </span>
+          )}
         </div>
       </div>
 
@@ -125,16 +132,19 @@ function PostCard({ post, onAction, showView = true }) {
         {tags.length > 0 && (
           <div className="admin-post-tags">
             {tags.map((tag, index) => (
-              <span key={index} className="admin-tag">
-                #{tag}
-              </span>
+              <FeedTagLink key={index} tag={tag} className="admin-tag" />
             ))}
           </div>
         )}
 
         {post.category?.name && (
           <div className="admin-post-tags" style={{ marginTop: '0.75rem' }}>
-            <span className="admin-tag">Категория: {post.category.name}</span>
+            <FeedCategoryLink
+              categoryId={post.category_id}
+              categoryName={post.category.name}
+              className="admin-tag"
+              prefix="Категория: "
+            />
           </div>
         )}
       </div>
@@ -152,38 +162,57 @@ function PostCard({ post, onAction, showView = true }) {
         {showView && (
           <button
             type="button"
-            className="btn btn-outline btn-sm"
+            className="admin-action-btn btn btn-outline btn-sm"
             onClick={() => onAction('view', post.id)}
+            aria-label="Просмотреть публикацию"
           >
-            Просмотреть
+            <span className="admin-action-btn__icon" aria-hidden="true">👁</span>
+            <span className="admin-action-btn__text">Просмотреть</span>
           </button>
         )}
         {!isDeleted && !isApproved && (
           <button
             type="button"
-            className="btn btn-primary btn-sm"
+            className="admin-action-btn btn btn-primary btn-sm"
             onClick={() => onAction('approve', post.id)}
+            aria-label="Одобрить публикацию"
           >
-            Одобрить
+            <span className="admin-action-btn__icon" aria-hidden="true">✓</span>
+            <span className="admin-action-btn__text">Одобрить</span>
           </button>
         )}
         {!isDeleted && (
           <>
             <button
               type="button"
-              className="btn btn-outline btn-sm"
+              className="admin-action-btn btn btn-outline btn-sm"
               onClick={() => onAction('reject', post.id)}
+              aria-label="Отклонить публикацию"
             >
-              Отклонить
+              <span className="admin-action-btn__icon" aria-hidden="true">✕</span>
+              <span className="admin-action-btn__text">Отклонить</span>
             </button>
             <button
               type="button"
-              className="btn btn-danger btn-sm"
+              className="admin-action-btn btn btn-danger btn-sm"
               onClick={() => onAction('delete', post.id)}
+              aria-label="Удалить за нарушение"
             >
-              Удалить за нарушение
+              <span className="admin-action-btn__icon" aria-hidden="true">🗑</span>
+              <span className="admin-action-btn__text">Удалить</span>
             </button>
           </>
+        )}
+        {isDeleted && post.can_restore && (
+          <button
+            type="button"
+            className="admin-action-btn btn btn-primary btn-sm"
+            onClick={() => onAction('restore', post.id)}
+            aria-label="Восстановить публикацию"
+          >
+            <span className="admin-action-btn__icon" aria-hidden="true">↺</span>
+            <span className="admin-action-btn__text">Восстановить</span>
+          </button>
         )}
       </div>
     </div>

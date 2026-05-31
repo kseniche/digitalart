@@ -2,10 +2,13 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Models\Comment;
 use App\Models\CommentReport;
+use App\Notifications\CommentReportSubmittedNotification;
 use App\Services\CommentModerationService;
+use App\Services\UserNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -13,7 +16,8 @@ use Illuminate\Validation\Rule;
 class CommentReportController extends Controller
 {
     public function __construct(
-        private readonly CommentModerationService $commentModeration
+        private readonly CommentModerationService $commentModeration,
+        private readonly UserNotificationService $userNotifications,
     ) {}
 
     public function store(Request $request, Comment $comment): JsonResponse
@@ -52,15 +56,26 @@ class CommentReportController extends Controller
             return response()->json(['message' => 'Вы уже отправляли жалобу на этот комментарий'], 422);
         }
 
-        CommentReport::create([
+        $report = CommentReport::create([
             'comment_id' => $comment->id,
             'user_id' => $request->user()->id,
             'reason' => $data['reason'],
             'other_text' => $data['reason'] === 'other' ? trim((string) $data['other_text']) : null,
         ]);
 
-        $comment->refresh();
+        $comment->refresh()->loadMissing('post');
         $this->commentModeration->applyReportAndMaybeHide($comment);
+
+        $this->userNotifications->notify(
+            $request->user(),
+            UserNotificationType::ReportSubmitted,
+            [
+                'title' => $comment->post?->post_title ?? 'Публикация',
+                'post_id' => (string) ($comment->post_id ?? ''),
+            ],
+            new CommentReportSubmittedNotification($comment, $report),
+            ['comment_id' => $comment->id, 'report_id' => $report->id]
+        );
 
         return response()->json([
             'message' => 'Жалоба принята. Комментарий будет проверен модератором.',

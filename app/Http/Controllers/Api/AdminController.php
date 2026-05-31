@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Support\AdminReportCsvBuilder;
 use App\Support\PostTags;
@@ -10,9 +11,17 @@ use App\Models\User;
 use App\Models\Post;
 use App\Models\Comment;
 use Illuminate\Database\QueryException;
+use App\Notifications\CommentPublishedNotification;
 use App\Notifications\CommentRemovedByAdminNotification;
+use App\Notifications\CommentRestoredNotification;
 use App\Notifications\PostApprovedNotification;
 use App\Notifications\PostRemovedByAdminNotification;
+use App\Notifications\PostRestoredNotification;
+use App\Notifications\UserBannedNotification;
+use App\Notifications\UserRoleChangedNotification;
+use App\Notifications\UserUnbannedNotification;
+use App\Services\UserNotificationService;
+use Spatie\Permission\Models\Role;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -21,6 +30,10 @@ use Illuminate\Support\Facades\Schema;
 
 class AdminController extends Controller
 {
+    public function __construct(
+        private readonly UserNotificationService $userNotifications,
+    ) {}
+
     /**
      * Ограничиваем per_page для админки, чтобы избежать перегруза БД/памяти.
      */
@@ -473,7 +486,16 @@ class AdminController extends Controller
             $user->load('roles');
 
             try {
-                $user->notify(new \App\Notifications\UserBannedNotification());
+                $this->userNotifications->notify(
+                    $user,
+                    UserNotificationType::AccountBanned,
+                    [
+                        'reason' => $data['ban_reason'],
+                        'user_id' => (string) $user->id,
+                    ],
+                    new UserBannedNotification(now()),
+                    ['ban_reason' => $data['ban_reason']]
+                );
             } catch (\Throwable $notifyError) {
                 Log::warning('banUser: уведомление не отправлено', [
                     'user_id' => $user->id,
@@ -500,11 +522,64 @@ class AdminController extends Controller
                 'ban_reason' => null,
             ]);
             $user->load('roles');
-            $user->notify(new \App\Notifications\UserUnbannedNotification());
+            $this->userNotifications->notify(
+                $user,
+                UserNotificationType::AccountUnbanned,
+                ['user_id' => (string) $user->id],
+                new UserUnbannedNotification()
+            );
+
             return response()->json(['message' => 'Пользователь разблокирован', 'user' => $user]);
         } catch (\Exception $e) {
             Log::error('Admin unbanUser error: ' . $e->getMessage());
             return response()->json(['message' => 'Ошибка при разблокировке пользователя'], 500);
+        }
+    }
+
+    /** Изменить роль пользователя (user | admin). */
+    public function updateUserRole(Request $request, $id): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'role' => 'required|string|in:user,admin',
+            ]);
+
+            $user = User::withTrashed()->findOrFail($id);
+
+            if ((int) $user->id === (int) $request->user()->id) {
+                return response()->json(['message' => 'Нельзя изменить свою роль'], 403);
+            }
+
+            if ($user->hasRole('admin') && $data['role'] === 'user') {
+                $adminCount = User::role('admin')->count();
+                if ($adminCount <= 1) {
+                    return response()->json(['message' => 'Нельзя снять роль у последнего администратора'], 403);
+                }
+            }
+
+            Role::findOrCreate($data['role']);
+            $user->syncRoles([$data['role']]);
+            $user->load('roles');
+
+            $roleLabel = $this->userNotifications->roleLabel($data['role']);
+            $this->userNotifications->notify(
+                $user,
+                UserNotificationType::RoleChanged,
+                ['role_label' => $roleLabel, 'user_id' => (string) $user->id],
+                new UserRoleChangedNotification($roleLabel),
+                ['role' => $data['role']]
+            );
+
+            return response()->json([
+                'message' => 'Роль пользователя обновлена',
+                'user' => $user,
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Admin updateUserRole error: '.$e->getMessage());
+
+            return response()->json(['message' => 'Ошибка при изменении роли'], 500);
         }
     }
     
@@ -566,6 +641,10 @@ class AdminController extends Controller
                         && $post->created_at
                         && $post->created_at->lt(now()->subDays(30))
                 );
+                foreach (\App\Support\ContentRetention::trashedMeta($post->deleted_at) as $key => $value) {
+                    $post->setAttribute($key, $value);
+                }
+
                 return $post;
             });
             
@@ -609,6 +688,16 @@ class AdminController extends Controller
                 ->orderBy('created_at', 'desc')
                 ->get();
 
+            foreach (\App\Support\ContentRetention::trashedMeta($post->deleted_at) as $key => $value) {
+                $post->setAttribute($key, $value);
+            }
+
+            $comments->each(function (Comment $comment) {
+                foreach (\App\Support\ContentRetention::trashedMeta($comment->deleted_at) as $key => $value) {
+                    $comment->setAttribute($key, $value);
+                }
+            });
+
             return response()->json([
                 'post' => $post,
                 'comments' => $comments,
@@ -638,7 +727,18 @@ class AdminController extends Controller
             ]);
 
             if ($post->author) {
-                $post->author->notify(new PostRemovedByAdminNotification($post, 'rejected', $reason !== '' ? $reason : null));
+                $this->userNotifications->notify(
+                    $post->author,
+                    UserNotificationType::PostRejected,
+                    [
+                        'title' => $post->post_title ?: 'Без названия',
+                        'post_id' => (string) $post->id,
+                        'user_id' => (string) $post->author->id,
+                        'reason' => $reason,
+                    ],
+                    new PostRemovedByAdminNotification($post, 'rejected', $reason !== '' ? $reason : null),
+                    ['post_id' => $post->id]
+                );
             }
             Log::info('Post rejected by admin', ['post_id' => $post->id, 'reason' => $reason]);
 
@@ -670,11 +770,31 @@ class AdminController extends Controller
             $post->delete();
 
             if ($author) {
-                $author->notify(new PostRemovedByAdminNotification($post, 'deleted', $reason !== '' ? $reason : null));
+                $this->userNotifications->notify(
+                    $author,
+                    UserNotificationType::PostDeleted,
+                    [
+                        'title' => $post->post_title ?: 'Без названия',
+                        'post_id' => (string) $post->id,
+                        'user_id' => (string) $author->id,
+                        'reason' => $reason,
+                    ],
+                    new PostRemovedByAdminNotification(
+                        $post,
+                        'deleted',
+                        $reason !== '' ? $reason : null,
+                        now()
+                    ),
+                    ['post_id' => $post->id]
+                );
             }
             Log::info('Post deleted by admin for violation', ['post_id' => $post->id, 'reason' => $reason]);
-            
-            return response()->json(['message' => 'Пост удален из за нарушения правил сообщества']);
+
+            $days = \App\Support\ContentRetention::graceDays();
+
+            return response()->json([
+                'message' => "Публикация удалена. Восстановление доступно в течение {$days} дней.",
+            ]);
         } catch (\Exception $e) {
             Log::error('Admin deletePost error: ' . $e->getMessage());
             return response()->json(['message' => 'Ошибка при удалении публикации'], 500);
@@ -697,7 +817,17 @@ class AdminController extends Controller
             ]);
 
             if ($post->author) {
-                $post->author->notify(new PostApprovedNotification($post));
+                $this->userNotifications->notify(
+                    $post->author,
+                    UserNotificationType::PostApproved,
+                    [
+                        'title' => $post->post_title ?: 'Без названия',
+                        'post_id' => (string) $post->id,
+                        'user_id' => (string) $post->author->id,
+                    ],
+                    new PostApprovedNotification($post),
+                    ['post_id' => $post->id]
+                );
             }
 
             return response()->json(['message' => 'Публикация одобрена']);
@@ -712,8 +842,34 @@ class AdminController extends Controller
     {
         try {
             $post = Post::withTrashed()->findOrFail($id);
+
+            if (! $post->trashed()) {
+                return response()->json(['message' => 'Публикация не удалена'], 422);
+            }
+
+            if (! \App\Support\ContentRetention::canRestore($post->deleted_at)) {
+                return response()->json([
+                    'message' => 'Срок восстановления истёк. Публикация будет удалена окончательно.',
+                ], 422);
+            }
+
             $post->restore();
-            
+            $post->load('author');
+
+            if ($post->author) {
+                $this->userNotifications->notify(
+                    $post->author,
+                    UserNotificationType::PostRestored,
+                    [
+                        'title' => $post->post_title ?: 'Без названия',
+                        'post_id' => (string) $post->id,
+                        'user_id' => (string) $post->author->id,
+                    ],
+                    new PostRestoredNotification($post->fresh()),
+                    ['post_id' => $post->id]
+                );
+            }
+
             return response()->json(['message' => 'Публикация успешно восстановлена']);
         } catch (\Exception $e) {
             Log::error('Admin restorePost error: ' . $e->getMessage());
@@ -792,7 +948,23 @@ class AdminController extends Controller
             $comment->delete();
 
             if ($author) {
-                $author->notify(new CommentRemovedByAdminNotification($comment));
+                $comment->loadMissing('post');
+                $this->userNotifications->notify(
+                    $author,
+                    UserNotificationType::CommentDeleted,
+                    [
+                        'delete_context' => 'Ваш комментарий удалён администратором.',
+                        'title' => $comment->post?->post_title ?? 'Публикация',
+                        'post_id' => (string) ($comment->post_id ?? ''),
+                        'reason' => '',
+                    ],
+                    new CommentRemovedByAdminNotification($comment),
+                    ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
+                );
+                $this->userNotifications->notifyCommentReporters(
+                    $comment,
+                    'По результатам проверки комментарий удалён модератором.'
+                );
             }
             
             return response()->json(['message' => 'Комментарий успешно удален']);
@@ -849,6 +1021,20 @@ class AdminController extends Controller
                 $post->increment('comment_count');
             }
 
+            $comment->loadMissing(['author', 'post']);
+            if ($comment->author) {
+                $this->userNotifications->notify(
+                    $comment->author,
+                    UserNotificationType::CommentPublished,
+                    [
+                        'title' => $comment->post?->post_title ?? 'Публикация',
+                        'post_id' => (string) ($comment->post_id ?? ''),
+                    ],
+                    new CommentPublishedNotification($comment),
+                    ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
+                );
+            }
+
             return response()->json(['message' => 'Комментарий одобрен']);
         } catch (\Exception $e) {
             Log::error('Admin approveComment error: ' . $e->getMessage());
@@ -881,6 +1067,20 @@ class AdminController extends Controller
             // Синхронизируем счетчик только для одобренных комментариев к активной публикации.
             if ($wasApproved && $post && !$post->trashed()) {
                 $post->increment('comment_count');
+            }
+
+            $comment->loadMissing(['author', 'post']);
+            if ($comment->author) {
+                $this->userNotifications->notify(
+                    $comment->author,
+                    UserNotificationType::CommentRestored,
+                    [
+                        'title' => $comment->post?->post_title ?? 'Публикация',
+                        'post_id' => (string) ($comment->post_id ?? ''),
+                    ],
+                    new CommentRestoredNotification($comment),
+                    ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
+                );
             }
             
             return response()->json(['message' => 'Комментарий успешно восстановлен']);

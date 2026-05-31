@@ -4,7 +4,7 @@ import { useGoBack } from '../hooks/useGoBack';
 import { getReturnState } from '../utils/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { apiFetch } from '../api';
+import { apiFetchLocal as apiFetch } from '../api';
 import EditPostModal from './modals/EditPostModal';
 import DeletePostModal from './modals/DeletePostModal';
 import LoginModal from './modals/LoginModal';
@@ -13,10 +13,21 @@ import CommentRulesAcceptModal from './modals/CommentRulesAcceptModal';
 import EmptyState from './common/EmptyState';
 import Alert from './common/Alert';
 import MediaPreview from './common/MediaPreview';
+import MediaLightbox from './common/MediaLightbox';
+import { IconHeart, IconBookmark, IconComment, IconEdit, IconTrash, IconPublish } from './common/SocialIcons';
 import MasonryGrid from './common/MasonryGrid';
 import MasonryRecommendationCard from './MasonryRecommendationCard';
 import CommentActionsMenu from './common/CommentActionsMenu';
+import FeedTagLink from './common/FeedTagLink';
+import FeedCategoryLink from './common/FeedCategoryLink';
+import { normalizeTagsList } from '../utils/feedUrl';
+import CharCounter from './common/CharCounter';
+import { FIELD_LIMITS } from '../constants/fieldLimits';
+import { mapApiValidationErrors } from '../utils/apiValidation';
+import { validateMaxLength, validateRequired } from '../utils/fieldValidation';
 import '../../css/app.css';
+
+const COMMENT_LIMIT = FIELD_LIMITS.comment;
 
 function PostDetail() {
   const COMMENT_COOLDOWN_MS = 10000;
@@ -34,6 +45,7 @@ function PostDetail() {
   const [isFavorited, setIsFavorited] = useState(false);
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
+  const [commentFieldError, setCommentFieldError] = useState('');
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [error, setError] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
@@ -49,6 +61,7 @@ function PostDetail() {
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [showCommentRulesModal, setShowCommentRulesModal] = useState(false);
   const [isAcceptingCommentRules, setIsAcceptingCommentRules] = useState(false);
+  const [mediaLightboxOpen, setMediaLightboxOpen] = useState(false);
   const isCommentCooldownActive = Date.now() < nextCommentAllowedAt;
   const hasAcceptedCommentRules = Boolean(user?.comment_rules_accepted_at);
 
@@ -71,7 +84,7 @@ function PostDetail() {
     if (!isAuthenticated) return setShowLoginModal(true);
     try {
       const response = await apiFetch(`/api/posts/${id}/like`, {
-        method: 'POST',
+method: 'POST',
         headers: { 'Accept': 'application/json' }
       });
       if (response.ok) {
@@ -87,14 +100,10 @@ function PostDetail() {
         }
         setError('');
       } else {
-        const msg = 'Не удалось поставить лайк. Попробуйте позже.';
-        setError(msg);
-        toast.error(msg);
+        toast.error('Не удалось поставить лайк. Попробуйте позже.');
       }
-    } catch (err) {
-      const msg = 'Ошибка соединения с сервером';
-      setError(msg);
-      toast.error(msg);
+    } catch {
+      toast.error('Ошибка соединения с сервером');
     }
   };
 
@@ -104,7 +113,7 @@ function PostDetail() {
     setIsFavorited(!prev);
     try {
       const response = await apiFetch(`/api/posts/${id}/favorite`, {
-        method: 'POST',
+method: 'POST',
         headers: { 'Accept': 'application/json' }
       });
       if (response.ok) {
@@ -129,7 +138,7 @@ function PostDetail() {
     setComments(prev => prev.map(c => c.id === commentId ? { ...c, is_liked: !prevLiked, likes_count: prevCount + (prevLiked ? -1 : 1) } : c));
     try {
       const res = await apiFetch(`/api/comments/${commentId}/like`, {
-        method: 'POST',
+method: 'POST',
         headers: { 'Accept': 'application/json' }
       });
       if (res.ok) {
@@ -149,17 +158,23 @@ function PostDetail() {
     const now = Date.now();
     if (now < nextCommentAllowedAt) {
       const secondsLeft = Math.ceil((nextCommentAllowedAt - now) / 1000);
-      const msg = `Комментарий можно отправить через ${secondsLeft} сек.`;
-      setError(msg);
-      toast.error(msg);
+      toast.error(`Комментарий можно отправить через ${secondsLeft} сек.`);
       return;
     }
 
+    const required = validateRequired(newComment, 'Комментарий');
+    const maxErr = validateMaxLength(newComment, COMMENT_LIMIT.content.max, 'Комментарий');
+    if (required || maxErr) {
+      setCommentFieldError(required || maxErr);
+      return;
+    }
+
+    setCommentFieldError('');
     setIsCommentSubmitting(true);
 
     try {
       const response = await apiFetch(`/api/posts/${id}/comments`, {
-        method: 'POST',
+method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -178,7 +193,12 @@ function PostDetail() {
             author: createdComment.author
               ? `${createdComment.author.name || ''} ${createdComment.author.surname || ''}`.trim() || 'Неизвестный автор'
               : 'Неизвестный автор',
-            avatar: createdComment.author?.avatar || user?.avatar_url || user?.avatar || '/default-avatar.svg',
+            avatar:
+              createdComment.author?.avatar_url
+              || createdComment.author?.avatar
+              || user?.avatar_url
+              || user?.avatar
+              || '/default-avatar.svg',
             text: createdComment.content || newComment,
             createdAt: createdComment.created_at || new Date().toISOString(),
             likes_count: 0,
@@ -194,16 +214,15 @@ function PostDetail() {
         toast.success(data?.message || 'Комментарий отправлен');
       } else if (response.status === 403 && data?.code === 'comment_rules_not_accepted') {
         setShowCommentRulesModal(true);
-        toast.error(data?.message || 'Примите правила комментариев');
+      } else if (response.status === 422 && data?.errors) {
+        const mapped = mapApiValidationErrors(data.errors);
+        setCommentFieldError(mapped.content || data.message || 'Проверьте текст комментария');
+        setError('');
       } else {
-        const msg = data?.message || 'Не удалось отправить комментарий. Попробуйте позже.';
-        setError(msg);
-        toast.error(msg);
+        setError(data?.message || 'Не удалось отправить комментарий. Попробуйте позже.');
       }
     } catch {
-      const msg = 'Ошибка соединения с сервером';
-      setError(msg);
-      toast.error(msg);
+      setError('Ошибка соединения с сервером');
     } finally {
       setIsCommentSubmitting(false);
     }
@@ -253,7 +272,9 @@ function PostDetail() {
     if (!id) return setIsLoading(false);
     if (!commentsOnly) setIsLoading(true);
     try {
-      const response = await apiFetch(`/api/posts/${id}?comments_sort=${sort}`, { headers: { 'Accept': 'application/json' } });
+      const response = await apiFetch(`/api/posts/${id}?comments_sort=${sort}`, {
+headers: { 'Accept': 'application/json' },
+      });
       if (response.ok) {
         const postData = await response.json();
         if (commentsOnly) {
@@ -310,7 +331,7 @@ function PostDetail() {
     
     try {
       const response = await apiFetch(`/api/posts/${id}`, {
-        method: 'PUT',
+method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -342,7 +363,9 @@ function PostDetail() {
       setEditSaveErrors({});
 
       // Перезагружаем пост для получения актуальных данных
-      const reloadResponse = await apiFetch(`/api/posts/${id}`, { headers: { 'Accept': 'application/json' } });
+      const reloadResponse = await apiFetch(`/api/posts/${id}`, {
+headers: { 'Accept': 'application/json' },
+      });
       if (reloadResponse.ok) {
         const postData = await reloadResponse.json();
         setPost(postData);
@@ -352,9 +375,7 @@ function PostDetail() {
       setError('');
       setEditSaveErrors({});
     } catch (e) {
-      const msg = e.message || 'Ошибка сохранения изменений';
-      setError(msg);
-      toast.error(msg);
+      setError(e.message || 'Ошибка сохранения изменений');
       throw e;
     } finally {
       setIsSaving(false);
@@ -368,7 +389,7 @@ function PostDetail() {
     
     try {
       const response = await apiFetch(`/api/posts/${id}`, {
-        method: 'DELETE',
+method: 'DELETE',
         headers: {
           'Accept': 'application/json',
         },
@@ -388,9 +409,7 @@ function PostDetail() {
 
       goBack();
     } catch (e) {
-      const msg = e.message || 'Ошибка удаления публикации';
-      setError(msg);
-      toast.error(msg);
+      setError(e.message || 'Ошибка удаления публикации');
       setIsDeleting(false);
       setShowDeleteModal(false);
     }
@@ -401,7 +420,7 @@ function PostDetail() {
     setError('');
     try {
       const response = await apiFetch(`/api/posts/${id}`, {
-        method: 'PUT',
+method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -417,9 +436,7 @@ function PostDetail() {
       toast.success('Публикация опубликована');
       await loadPost();
     } catch (e) {
-      const msg = e.message || 'Ошибка публикации';
-      setError(msg);
-      toast.error(msg);
+      setError(e.message || 'Ошибка публикации');
     } finally {
       setIsPublishing(false);
     }
@@ -443,18 +460,11 @@ function PostDetail() {
       <div className="post-detail-card">
         {/* Кнопка закрытия */}
         <button
+          type="button"
           onClick={goBack}
           aria-label="Назад"
           title="Назад"
-          className="ui-icon-btn"
-          style={{
-            position: 'absolute',
-            top: '1rem',
-            right: '1rem',
-            zIndex: 10,
-            fontFamily: 'JetBrains Mono, monospace',
-            fontWeight: 'bold'
-          }}
+          className="ui-icon-btn post-detail-close-btn"
         >
           ×
         </button>
@@ -462,17 +472,53 @@ function PostDetail() {
       <div className="post-detail-grid">
         {/* Левая часть - изображение */}
         <div className="post-detail-media-col">
-          <MediaPreview
+          <div className="post-detail-media-wrap">
+            <button
+              type="button"
+              className="post-detail-media-trigger"
+              onClick={() => setMediaLightboxOpen(true)}
+              aria-label="Открыть медиа на весь экран"
+            >
+              <MediaPreview
+                src={post.image_url || post.media_path}
+                mediaType={post.media_type}
+                alt={post.post_title}
+                interactionMode="card"
+                controls={false}
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '600px',
+                  borderRadius: '8px',
+                  objectFit: 'contain',
+                  cursor: 'pointer',
+                  display: 'block',
+                  width: '100%',
+                }}
+              />
+            </button>
+            {post.media_type !== 'video' && (
+              <button
+                type="button"
+                className="post-detail-fullscreen-icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMediaLightboxOpen(true);
+                }}
+                aria-label="Просмотр в полноэкранном режиме"
+                title="Просмотр в полноэкранном режиме"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <MediaLightbox
+            open={mediaLightboxOpen}
             src={post.image_url || post.media_path}
             mediaType={post.media_type}
             alt={post.post_title}
-            style={{
-              maxWidth: '100%',
-              maxHeight: '600px',
-              borderRadius: '8px',
-              objectFit: 'contain',
-              cursor: post.media_type === 'video' ? 'default' : 'pointer'
-            }}
+            onClose={() => setMediaLightboxOpen(false)}
           />
         </div>
 
@@ -501,7 +547,7 @@ function PostDetail() {
             {isAuthenticated && post.author?.id ? (
               <Link
                 to={`/profile/${post.author.id}`}
-                state={{ from: location.pathname }}
+                state={postLinkState}
                 className="post-author-link"
               >
                 <img
@@ -560,39 +606,55 @@ function PostDetail() {
                 {post.is_draft ? (
                   <>
                     <button
+                      type="button"
+                      className="post-social-action post-social-action--danger"
                       onClick={() => setShowDeleteModal(true)}
-                      className="btn btn-danger btn-sm"
+                      aria-label="Удалить"
                     >
-                      Удалить
+                      <IconTrash />
+                      <span className="post-social-action__label">Удалить</span>
                     </button>
                     <button
+                      type="button"
+                      className="post-social-action"
                       onClick={() => setShowEditModal(true)}
-                      className="btn btn-outline btn-sm"
+                      aria-label="Редактировать"
                     >
-                      Редактировать
+                      <IconEdit />
+                      <span className="post-social-action__label">Редактировать</span>
                     </button>
                     <button
+                      type="button"
+                      className="post-social-action post-social-action--brand"
                       onClick={handlePublish}
                       disabled={isPublishing}
-                      className="btn btn-primary btn-sm"
-                      style={{ opacity: isPublishing ? 0.7 : 1 }}
+                      aria-label={isPublishing ? 'Публикация…' : 'Опубликовать'}
                     >
-                      {isPublishing ? 'Публикация…' : 'Опубликовать'}
+                      <IconPublish />
+                      <span className="post-social-action__label">
+                        {isPublishing ? 'Публикация…' : 'Опубликовать'}
+                      </span>
                     </button>
                   </>
                 ) : (
                   <>
                     <button
+                      type="button"
+                      className="post-social-action"
                       onClick={() => setShowEditModal(true)}
-                      className="btn btn-outline btn-sm"
+                      aria-label="Редактировать"
                     >
-                      Редактировать
+                      <IconEdit />
+                      <span className="post-social-action__label">Редактировать</span>
                     </button>
                     <button
+                      type="button"
+                      className="post-social-action post-social-action--danger"
                       onClick={() => setShowDeleteModal(true)}
-                      className="btn btn-danger btn-sm"
+                      aria-label="Удалить"
                     >
-                      Удалить
+                      <IconTrash />
+                      <span className="post-social-action__label">Удалить</span>
                     </button>
                   </>
                 )}
@@ -607,7 +669,14 @@ function PostDetail() {
               year: 'numeric'
             })}
             {(typeof post.category === 'string' ? post.category : post.category?.name) && (
-              <span className="post-detail-category">· {typeof post.category === 'string' ? post.category : post.category?.name}</span>
+              <>
+                <span className="post-detail-meta-sep" aria-hidden="true">·</span>
+                <FeedCategoryLink
+                  categoryId={post.category_id ?? post.category?.id}
+                  categoryName={typeof post.category === 'string' ? post.category : post.category?.name}
+                  className="post-detail-category"
+                />
+              </>
             )}
           </div>
 
@@ -623,15 +692,10 @@ function PostDetail() {
           )}
 
           {/* Теги */}
-          {post.tags && post.tags.length > 0 && (
+          {normalizeTagsList(post.tags).length > 0 && (
             <div className="post-detail-tags">
-              {(Array.isArray(post.tags) ? post.tags : post.tags.split(',')).map((tag, index) => (
-                <span
-                  key={index}
-                  className="post-detail-tag"
-                >
-                  #{typeof tag === 'string' ? tag.trim() : tag}
-                </span>
+              {normalizeTagsList(post.tags).map((tag, index) => (
+                <FeedTagLink key={`${tag}-${index}`} tag={tag} className="post-detail-tag" />
               ))}
             </div>
           )}
@@ -639,32 +703,32 @@ function PostDetail() {
           {isApprovedPublished && !isRejectedUnpublished && (
           <div className="post-detail-social-row">
             <button
+              type="button"
               onClick={handleLike}
-              className="ui-inline-action"
-              style={{
-                color: isLiked ? '#7B0000' : '#6b7280',
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: '0.9rem',
-              }}
+              className="post-social-action"
+              style={{ color: isLiked ? '#7B0000' : '#6b7280' }}
+              aria-label={`Нравится, ${likes} лайков`}
+              title={`Нравится (${likes})`}
             >
-              <span style={{ fontSize: '1.2rem' }}>{isLiked ? '❤️' : '🤍'}</span>
-              {isLiked ? 'Нравится' : 'Нравится'} ({likes})
+              <IconHeart active={isLiked} />
+              <span className="post-social-action__count">{likes}</span>
+              <span className="post-social-action__label">Нравится</span>
             </button>
             <button
+              type="button"
               onClick={handleFavorite}
-              className="ui-inline-action"
-              style={{
-                color: isFavorited ? '#7B0000' : '#6b7280',
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: '0.9rem',
-              }}
-              title={isFavorited ? 'Убрать из избранного' : 'В избранное'}
+              className="post-social-action"
+              style={{ color: isFavorited ? '#7B0000' : '#6b7280' }}
+              aria-label={isFavorited ? 'Убрать из избранного' : 'В избранное'}
+              title={isFavorited ? 'В избранном' : 'В избранное'}
             >
-              <span style={{ fontSize: '1.2rem' }}>{isFavorited ? '🔖' : '📑'}</span>
-              {isFavorited ? 'В избранном' : 'В избранное'}
+              <IconBookmark active={isFavorited} />
+              <span className="post-social-action__label">{isFavorited ? 'В избранном' : 'В избранное'}</span>
             </button>
-            <div className="post-detail-comments-count">
-              Комментарии: {comments.length}
+            <div className="post-social-action post-social-action--static" aria-label={`Комментарии: ${comments.length}`}>
+              <IconComment />
+              <span className="post-social-action__count">{comments.length}</span>
+              <span className="post-social-action__label">Комментарии</span>
             </div>
           </div>
           )}
@@ -697,56 +761,55 @@ function PostDetail() {
                     e.target.src = '/default-avatar.svg';
                   }}
                 />
-                <input 
-                  type="text"
-                  value={newComment} 
-                  onChange={e => setNewComment(e.target.value)}
+                <textarea
+                  rows={2}
+                  value={newComment}
+                  onChange={(e) => {
+                    setNewComment(e.target.value);
+                    if (commentFieldError) setCommentFieldError('');
+                  }}
                   placeholder="Оставить комментарий..."
-                  className="post-comment-input"
+                  className={`post-comment-input post-comment-input--area${commentFieldError ? ' error' : ''}`}
+                  maxLength={COMMENT_LIMIT.content.max}
+                  aria-invalid={!!commentFieldError}
                 />
-                <button 
+                <button
                   type="submit"
                   disabled={isCommentSubmitting || isCommentCooldownActive}
                   className="post-comment-submit"
+                  aria-label="Отправить комментарий"
                 >
                   →
                 </button>
               </div>
+              <CharCounter
+                value={newComment}
+                max={COMMENT_LIMIT.content.max}
+                min={COMMENT_LIMIT.content.min}
+                required={false}
+                hint="Текст комментария"
+              />
+              {commentFieldError && (
+                <div className="form-error" style={{ marginTop: '0.35rem' }}>{commentFieldError}</div>
+              )}
       </form>
 
-            <div className="profile-tabs" style={{ marginBottom: '0.75rem' }}>
-              <span className="ui-form-help" style={{ marginTop: 0 }}>Сортировка:</span>
+            <div className="ui-segmented-control" role="group" aria-label="Сортировка комментариев">
               <button
                 type="button"
+                className={`ui-segmented-control__btn${commentsSort === 'new' ? ' ui-segmented-control__btn--active' : ''}`}
                 onClick={() => setCommentsSort('new')}
-                style={{
-                  padding: '0.35rem 0.75rem',
-                  borderRadius: '8px',
-                  border: commentsSort === 'new' ? '2px solid #7B0000' : '1px solid #D4D1CC',
-                  background: commentsSort === 'new' ? 'rgba(123, 0, 0, 0.08)' : '#DEDDD8',
-                  color: commentsSort === 'new' ? '#7B0000' : '#111827',
-                  fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: '0.8rem',
-                  cursor: 'pointer'
-                }}
+                aria-pressed={commentsSort === 'new'}
               >
-                Сначала новые
+                Новые
               </button>
               <button
                 type="button"
+                className={`ui-segmented-control__btn${commentsSort === 'popular' ? ' ui-segmented-control__btn--active' : ''}`}
                 onClick={() => setCommentsSort('popular')}
-                style={{
-                  padding: '0.35rem 0.75rem',
-                  borderRadius: '8px',
-                  border: commentsSort === 'popular' ? '2px solid #7B0000' : '1px solid #D4D1CC',
-                  background: commentsSort === 'popular' ? 'rgba(123, 0, 0, 0.08)' : '#DEDDD8',
-                  color: commentsSort === 'popular' ? '#7B0000' : '#111827',
-                  fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: '0.8rem',
-                  cursor: 'pointer'
-                }}
+                aria-pressed={commentsSort === 'popular'}
               >
-                По популярности
+                Популярные
               </button>
             </div>
 
@@ -784,22 +847,18 @@ function PostDetail() {
                       <button
                         type="button"
                         onClick={() => handleCommentLike(c.id)}
-                        className="ui-inline-action"
-                        style={{
-                          marginTop: '0.35rem',
-                          padding: '0.2rem 0.35rem',
-                          fontSize: '0.75rem',
-                          color: c.is_liked ? '#7B0000' : '#6b7280',
-                          fontFamily: 'JetBrains Mono, monospace'
-                        }}
+                        className={`post-comment-like${c.is_liked ? ' post-comment-like--active' : ''}`}
+                        aria-label={`${c.is_liked ? 'Убрать лайк' : 'Нравится'}, ${c.likes_count ?? 0}`}
                         title={c.is_liked ? 'Убрать лайк' : 'Нравится'}
                       >
-                        {c.is_liked ? '❤️' : '🤍'} {c.likes_count ?? 0}
+                        <IconHeart active={c.is_liked} />
+                        <span className="post-comment-like__count">{c.likes_count ?? 0}</span>
                       </button>
                     )}
                     {!isAuthenticated && (c.likes_count ?? 0) > 0 && (
-                      <span style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#6b7280', fontFamily: 'JetBrains Mono, monospace' }}>
-                        🤍 {c.likes_count}
+                      <span className="post-comment-like post-comment-like--static" aria-hidden="true">
+                        <IconHeart active={false} />
+                        <span className="post-comment-like__count">{c.likes_count}</span>
                       </span>
                     )}
                   </div>

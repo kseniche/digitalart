@@ -3,11 +3,28 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useGoBack } from '../hooks/useGoBack';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { apiFetch } from '../api';
+import { apiFetchLocal as apiFetch } from '../api';
+import {
+  POST_TAG_MAX_COUNT,
+  POST_TAGS_INPUT_MAX,
+  validateTagsInput,
+} from '../utils/postTagLimits';
+import { FIELD_LIMITS } from '../constants/fieldLimits';
+import CharCounter from './common/CharCounter';
+import { getApiErrorMessage, mapApiValidationErrors } from '../utils/apiValidation';
+import {
+  isNearLimit,
+  isOverLimit,
+  validateMaxLength,
+  validateRequired,
+} from '../utils/fieldValidation';
+import MarkdownTextarea from './common/MarkdownTextarea';
 import '../../css/app.css';
 
 const MAX_MEDIA_SIZE_MB = 50;
 const MAX_MEDIA_SIZE_BYTES = MAX_MEDIA_SIZE_MB * 1024 * 1024;
+const TITLE_LIMIT = FIELD_LIMITS.post.title;
+const DESCRIPTION_LIMIT = FIELD_LIMITS.post.description;
 
 const API_FIELD_TO_FORM = {
   media_file: 'image',
@@ -17,40 +34,6 @@ const API_FIELD_TO_FORM = {
   tags: 'tags',
 };
 
-function humanizeValidationMessage(raw) {
-  if (!raw || typeof raw !== 'string') {
-    return 'Проверьте правильность заполнения формы';
-  }
-  const msg = raw.trim();
-  const key = msg.toLowerCase().replace(/\s+/g, '');
-  if (key.includes('validation.uploaded') || key.includes('uploaded')) {
-    return 'Файл загружен некорректно. Попробуйте загрузить файл ещё раз или уменьшите размер (до 50 МБ).';
-  }
-  if (key.includes('validation.required') || (key.includes('required') && key.includes('validation'))) {
-    return 'Заполните обязательное поле.';
-  }
-  if (key.includes('validation.max')) {
-    return 'Превышен допустимый размер или длина поля.';
-  }
-  if (/^validation\.[a-z0-9_.]+$/i.test(msg)) {
-    return 'Проверьте правильность заполнения формы';
-  }
-  return msg;
-}
-
-function mapApiValidationErrors(apiErrors) {
-  const mapped = {};
-  if (!apiErrors || typeof apiErrors !== 'object') {
-    return mapped;
-  }
-  Object.entries(apiErrors).forEach(([apiKey, value]) => {
-    const formKey = API_FIELD_TO_FORM[apiKey] || apiKey;
-    const first = Array.isArray(value) ? value[0] : value;
-    mapped[formKey] = humanizeValidationMessage(first);
-  });
-  return mapped;
-}
-
 function CreatePost() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -58,6 +41,7 @@ function CreatePost() {
   const { isAuthenticated, user } = useAuth();
   const toast = useToast().toast;
   const submitAsDraftRef = useRef(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -114,8 +98,17 @@ function CreatePost() {
       }
 
       // Проверяем тип файла
-      const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime'];
-      if (!validTypes.includes(file.type)) {
+      const validTypes = [
+        'image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp',
+        'video/mp4', 'video/webm', 'video/quicktime', 'video/x-mp4', 'video/x-m4v', 'application/mp4',
+      ];
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+      const videoExts = ['mp4', 'webm', 'mov', 'm4v'];
+      const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+      const typeOk = validTypes.includes(file.type)
+        || (file.type === '' && (videoExts.includes(ext) || imageExts.includes(ext)))
+        || (file.type === 'application/octet-stream' && (videoExts.includes(ext) || imageExts.includes(ext)));
+      if (!typeOk) {
         setErrors(prev => ({
           ...prev,
           image: 'Допустимые форматы: JPEG, PNG, GIF, WebP, MP4, WebM, MOV'
@@ -142,21 +135,30 @@ function CreatePost() {
         setImagePreview(e.target.result);
       };
       reader.readAsDataURL(file);
-      setMediaType(file.type.startsWith('video/') ? 'video' : 'image');
+      const isVideo = file.type.startsWith('video/')
+        || videoExts.includes(ext)
+        || (file.type === 'application/mp4' || (file.type === 'application/octet-stream' && ext === 'mp4'));
+      setMediaType(isVideo ? 'video' : 'image');
     }
   };
 
   const validateForm = () => {
     const newErrors = {};
 
-    if (!formData.title.trim()) {
-      newErrors.title = 'Название обязательно';
-    } else if (formData.title.length > 100) {
-      newErrors.title = 'Название не должно превышать 100 символов';
+    const titleRequired = validateRequired(formData.title, 'Название');
+    if (titleRequired) {
+      newErrors.title = titleRequired;
+    } else {
+      const titleMax = validateMaxLength(formData.title, TITLE_LIMIT.max, 'Название');
+      if (titleMax) newErrors.title = titleMax;
     }
 
-    if (!formData.description.trim()) {
-      newErrors.description = 'Описание обязательно';
+    const descRequired = validateRequired(formData.description, 'Описание');
+    if (descRequired) {
+      newErrors.description = descRequired;
+    } else {
+      const descMax = validateMaxLength(formData.description, DESCRIPTION_LIMIT.max, 'Описание');
+      if (descMax) newErrors.description = descMax;
     }
 
     if (!formData.image) {
@@ -165,6 +167,11 @@ function CreatePost() {
 
     if (!formData.category_id) {
       newErrors.category_id = 'Выберите категорию';
+    }
+
+    const tagCheck = validateTagsInput(formData.tags);
+    if (!tagCheck.isValid) {
+      Object.assign(newErrors, tagCheck.errors);
     }
 
     setErrors(newErrors);
@@ -211,15 +218,13 @@ function CreatePost() {
       });
 
       if (!response.ok) {
-        let errorMessage = 'Ошибка при создании поста';
+        let errorMessage = 'Не удалось создать публикацию';
         let fieldErrors = {};
         try {
           const errorData = await response.json();
-          if (response.status === 422) {
-            errorMessage = 'Проверьте правильность заполнения формы';
-            fieldErrors = mapApiValidationErrors(errorData.errors);
-          } else {
-            errorMessage = humanizeValidationMessage(errorData.message) || errorMessage;
+          errorMessage = getApiErrorMessage(response, errorData, errorMessage);
+          if (response.status === 422 && errorData.errors) {
+            fieldErrors = mapApiValidationErrors(errorData.errors, API_FIELD_TO_FORM);
           }
         } catch (parseError) {
           // ignore
@@ -258,8 +263,8 @@ function CreatePost() {
   };
 
   return (
-    <div className="main-content">
-      <div style={{ marginBottom: '2rem' }}>
+    <div className="main-content create-post-page">
+      <div className="create-post-page__back-row" style={{ marginBottom: '2rem' }}>
         <button
           onClick={goBack}
           className="ui-page-back"
@@ -270,7 +275,7 @@ function CreatePost() {
         </button>
       </div>
 
-      <div className="create-post-grid ui-two-col">
+      <div className="create-post-grid ui-two-col create-post-layout">
         {/* Левая панель - загрузка медиа */}
         <div>
           <h2 className="ui-section-title">Медиа</h2>
@@ -325,11 +330,7 @@ function CreatePost() {
                     />
                   )}
                 </div>
-                <div style={{ 
-                  display: 'flex', 
-                  gap: '1rem',
-                  justifyContent: 'center'
-                }}>
+                <div className="create-post-media-actions">
                   <button
                     onClick={() => document.getElementById('image-upload').click()}
                     className="btn btn-outline"
@@ -410,12 +411,14 @@ function CreatePost() {
                   onChange={handleChange}
                   className={`form-input ${errors.title ? 'error' : ''}`}
                   placeholder="Введите название работы"
-                  maxLength={100}
+                  maxLength={TITLE_LIMIT.max}
                 />
-                <div className="ui-form-help ui-form-help-row">
-                  <span>Обязательное поле</span>
-                  <span>{formData.title.length}/100</span>
-                </div>
+                <CharCounter
+                  value={formData.title}
+                  max={TITLE_LIMIT.max}
+                  min={TITLE_LIMIT.min}
+                  required
+                />
                 {errors.title && (
                   <div className="form-error" style={{ marginTop: '0.5rem' }}>
                     {errors.title}
@@ -427,19 +430,23 @@ function CreatePost() {
                 <label htmlFor="description" className="form-label">
                   Описание *
                 </label>
-                <textarea
+                <MarkdownTextarea
                   id="description"
                   name="description"
                   value={formData.description}
                   onChange={handleChange}
-                  className={`form-input ${errors.description ? 'error' : ''}`}
+                  error={!!errors.description}
                   placeholder="Опишите вашу работу: техника, материалы, идея..."
                   rows={6}
-                  style={{ resize: 'vertical' }}
+                  helpText={null}
+                  maxLength={DESCRIPTION_LIMIT.max}
                 />
-                <div className="ui-form-help">
-                  Обязательное поле. Поддерживается Markdown: <strong>**жирный**</strong>, <em>*курсив*</em>, - список, [ссылка](url).
-                </div>
+                <CharCounter
+                  value={formData.description}
+                  max={DESCRIPTION_LIMIT.max}
+                  min={DESCRIPTION_LIMIT.min}
+                  required
+                />
                 {errors.description && (
                   <div className="form-error" style={{ marginTop: '0.5rem' }}>
                     {errors.description}
@@ -482,33 +489,68 @@ function CreatePost() {
                   value={formData.tags}
                   onChange={handleChange}
                   className="form-input"
+                  maxLength={POST_TAGS_INPUT_MAX}
                   placeholder="цифровая живопись, пейзаж, photoshop (через запятую)"
+                  aria-describedby="tags-help tags-counter"
                 />
-                <div className="ui-form-help">
-                  Теги помогут другим найти вашу работу. Разделяйте запятыми.
+                <div className="ui-form-help" id="tags-help">
+                  До {POST_TAG_MAX_COUNT} тегов через запятую. Теги помогут другим найти вашу работу.
                 </div>
+                <div
+                  id="tags-counter"
+                  className={`ui-form-help ui-form-help-row${
+                    (() => {
+                      const { charCount } = validateTagsInput(formData.tags);
+                      if (isOverLimit(charCount, POST_TAGS_INPUT_MAX)) return ' char-counter--over';
+                      if (isNearLimit(charCount, POST_TAGS_INPUT_MAX)) return ' char-counter--warn';
+                      return '';
+                    })()
+                  }`}
+                  style={{ marginTop: '0.25rem' }}
+                  aria-live="polite"
+                >
+                  {(() => {
+                    const { tagCount, charCount } = validateTagsInput(formData.tags);
+                    const tagWarn = tagCount / POST_TAG_MAX_COUNT >= 0.9 && tagCount <= POST_TAG_MAX_COUNT;
+                    return (
+                      <span>
+                        Тегов: {tagCount} / {POST_TAG_MAX_COUNT}
+                        {tagWarn ? ' · почти достигнут лимит' : ''}
+                        {' · '}
+                        {charCount} / {POST_TAGS_INPUT_MAX} символов
+                      </span>
+                    );
+                  })()}
+                </div>
+                {errors.tags && (
+                  <div className="form-error" style={{ marginTop: '0.5rem' }}>
+                    {errors.tags}
+                  </div>
+                )}
               </div>
 
-              <div className="form-group" style={{ marginTop: '1rem' }}>
+              <div className="form-group form-group--publish" style={{ marginTop: '1rem' }}>
                 <span className="form-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Публикация</span>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace' }}>
+                <div className="publish-options">
+                  <label className="publish-option">
                     <input
                       type="radio"
                       name="publish_mode"
                       checked={formData.publish_mode === 'now'}
                       onChange={() => setFormData(prev => ({ ...prev, publish_mode: 'now' }))}
                     />
-                    Опубликовать сразу
+                    <span className="publish-option__label publish-option__label--full">Опубликовать сразу</span>
+                    <span className="publish-option__label publish-option__label--short">Сразу</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace' }}>
+                  <label className="publish-option">
                     <input
                       type="radio"
                       name="publish_mode"
                       checked={formData.publish_mode === 'schedule'}
                       onChange={() => setFormData(prev => ({ ...prev, publish_mode: 'schedule' }))}
                     />
-                    Запланировать на дату
+                    <span className="publish-option__label publish-option__label--full">Запланировать на дату</span>
+                    <span className="publish-option__label publish-option__label--short">По дате</span>
                   </label>
                   {formData.publish_mode === 'schedule' && (
                     <input
@@ -517,18 +559,13 @@ function CreatePost() {
                       value={formData.published_at}
                       min={new Date().toISOString().slice(0, 16)}
                       onChange={handleChange}
-                      style={{
-                        padding: '0.5rem',
-                        borderRadius: '8px',
-                        border: '1px solid #D4D1CC',
-                        fontFamily: 'JetBrains Mono, monospace'
-                      }}
+                      className="form-input create-post-datetime"
                     />
                   )}
                 </div>
               </div>
 
-              <div className="ui-action-buttons">
+              <div className="ui-action-buttons ui-action-buttons--desktop">
                 <button
                   type="button"
                   onClick={() => navigate('/')}
@@ -554,22 +591,72 @@ function CreatePost() {
                   style={{ flex: '1 1 100px' }}
                   disabled={isLoading}
                 >
-                  {isLoading ? (
-                    <>
-                      <span style={{ marginRight: '0.5rem' }}></span>
-                      Публикация...
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ marginRight: '0.5rem' }}></span>
-                      Опубликовать
-                    </>
-                  )}
+                  {isLoading ? 'Публикация...' : 'Опубликовать'}
                 </button>
               </div>
             </form>
           </div>
         </div>
+      </div>
+
+      <div className="form-action-bar form-action-bar--mobile" role="toolbar" aria-label="Действия публикации">
+        <button
+          type="button"
+          className="form-action-bar__icon-btn"
+          onClick={goBack}
+          aria-label="Назад"
+        >
+          ←
+        </button>
+        <div className="form-action-bar__menu-wrap">
+          <button
+            type="button"
+            className="form-action-bar__icon-btn"
+            onClick={() => setMobileMoreOpen((open) => !open)}
+            aria-label="Дополнительные действия"
+            aria-expanded={mobileMoreOpen}
+          >
+            ⋯
+          </button>
+          {mobileMoreOpen && (
+            <div className="form-action-bar__menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="form-action-bar__menu-item"
+                disabled={isLoading}
+                onClick={() => {
+                  setMobileMoreOpen(false);
+                  navigate('/');
+                }}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="form-action-bar__menu-item"
+                disabled={isLoading}
+                onClick={() => {
+                  setMobileMoreOpen(false);
+                  submitAsDraftRef.current = true;
+                  document.getElementById('create-post-form').requestSubmit();
+                }}
+              >
+                {isLoading ? 'Сохранение...' : 'Черновик'}
+              </button>
+            </div>
+          )}
+        </div>
+        <button
+          type="submit"
+          form="create-post-form"
+          className="btn btn-primary form-action-bar__primary"
+          onClick={() => { submitAsDraftRef.current = false; }}
+          disabled={isLoading}
+        >
+          {isLoading ? 'Публикация...' : 'Опубликовать'}
+        </button>
       </div>
     </div>
   );

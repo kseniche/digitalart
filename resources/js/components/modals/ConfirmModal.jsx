@@ -14,6 +14,7 @@ function ConfirmModal({
   variant = 'danger',
   onConfirm,
   onClose,
+  overlayClassName = '',
   isLoading = false,
   reasonLabel = '',
   reasonPlaceholder = '',
@@ -30,7 +31,7 @@ function ConfirmModal({
 
   return (
     <div
-      className="modal-overlay"
+      className={`modal-overlay${overlayClassName ? ` ${overlayClassName}` : ''}`}
       onClick={onClose}
       role="dialog"
       aria-modal="true"

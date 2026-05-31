@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import EmptyState from '../common/EmptyState';
 import ReportPeriodModal, { REPORT_PERIOD_FILENAME_PART } from '../modals/ReportPeriodModal';

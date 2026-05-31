@@ -22,6 +22,7 @@ class User extends Authenticatable
         'phone',
         'avatar',
         'country',
+        'country_id',
         'website',
         'bio',
         'is_banned',
@@ -124,6 +125,30 @@ class User extends Authenticatable
     public function favorites()
     {
         return $this->belongsToMany(Post::class, 'favorites')->withTimestamps();
+    }
+
+    public function userNotifications()
+    {
+        return $this->hasMany(UserNotification::class);
+    }
+
+    public function countryModel(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Country::class, 'country_id');
+    }
+
+    public function countryLabel(): string
+    {
+        if ($this->relationLoaded('countryModel') && $this->countryModel) {
+            return $this->countryModel->name_ru;
+        }
+        if ($this->country_id) {
+            $name = Country::query()->whereKey($this->country_id)->value('name_ru');
+
+            return $name ?? trim((string) $this->country);
+        }
+
+        return trim((string) ($this->country ?? ''));
     }
 
     // Accessors для вычисляемых полей

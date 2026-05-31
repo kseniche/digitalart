@@ -16,8 +16,15 @@ function getApiErrorMessage(res, err, data) {
     return { type: 'error', message: 'Недостаточно прав для выполнения действия' };
   }
   if (status === 404) return { type: 'warning', message: 'Запрашиваемый ресурс не найден' };
-  if (status === 422) return { type: 'error', message: 'Проверьте правильность заполнения формы' };
-  if (status >= 500) return { type: 'error', message: 'Ошибка сервера. Попробуйте позже' };
+  if (status === 422) {
+    return { type: 'error', message: msg || 'Проверьте правильность заполнения формы' };
+  }
+  if (status >= 500) {
+    return { type: 'error', message: msg || 'Ошибка сервера. Попробуйте позже' };
+  }
+  if (msg) {
+    return { type: 'error', message: String(msg) };
+  }
   return { type: 'error', message: 'Ошибка сервера. Попробуйте позже' };
 }
 
@@ -39,9 +46,22 @@ export function ToastProvider({ children }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  const lastToastRef = useRef({ message: '', type: '', at: 0 });
+
   const addToast = useCallback((type, message) => {
-    const id = Date.now() + Math.random();
-    const toast = { id, type, message };
+    const text = String(message ?? '').trim();
+    if (!text) {
+      return null;
+    }
+    const now = Date.now();
+    const last = lastToastRef.current;
+    if (last.message === text && last.type === type && now - last.at < 900) {
+      return null;
+    }
+    lastToastRef.current = { message: text, type, at: now };
+
+    const id = now + Math.random();
+    const toast = { id, type, message: text };
     setToasts((prev) => [...prev, toast]);
 
     const timer = setTimeout(() => removeToast(id), AUTO_CLOSE_MS);

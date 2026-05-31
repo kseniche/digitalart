@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import Alert from '../common/Alert';
 import '../../../css/app.css';
 

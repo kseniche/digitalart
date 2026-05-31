@@ -6,12 +6,13 @@ import {
   FEED_DEFAULT_SORT_BY,
   FEED_DEFAULT_SORT_DIR,
 } from '../contexts/FeedFiltersContext';
-import { useToast } from '../contexts/ToastContext';
-import { apiFetch } from '../api';
+import { apiFetchLocal as apiFetch } from '../api';
 import EmptyState from './common/EmptyState';
 import Alert from './common/Alert';
 import FeedPostCard from './FeedPostCard';
 import MasonryGrid from './common/MasonryGrid';
+import { useFeedUrlSync } from '../hooks/useFeedUrlSync';
+import { categoryToSlug } from '../utils/feedUrl';
 import '../../css/app.css';
 
 const SORT_BY_OPTIONS = [
@@ -25,7 +26,6 @@ const TAG_FILTER_DEBOUNCE_MS = 450;
 
 function HomePage() {
   const { isAuthenticated } = useAuth();
-  const { toast } = useToast();
   const {
     searchInput,
     setSearchInput,
@@ -67,6 +67,8 @@ function HomePage() {
   const filtersMountedRef = useRef(false);
   const scrollRestoredRef = useRef(false);
 
+  useFeedUrlSync(categories);
+
   const formatPost = (post) => ({
     id: post.id,
     title: post.post_title,
@@ -84,6 +86,11 @@ function HomePage() {
     comments: post.comment_count || 0,
     createdAt: post.created_at || '',
     category: post.category || null,
+    categoryId: post.category_id ?? post.category?.id ?? null,
+    categoryName:
+      typeof post.category === 'string'
+        ? post.category
+        : (post.category?.name ?? null),
   });
 
   const buildFeedParams = useCallback((page) => {
@@ -95,8 +102,9 @@ function HomePage() {
     if (searchQuery.trim()) params.set('q', searchQuery.trim());
     if (tagFilter.trim()) params.set('tag', tagFilter.trim());
     if (categoryFilter) {
-      params.set('category', categoryFilter);
       params.set('category_id', categoryFilter);
+      const cat = categories.find((c) => String(c.id) === String(categoryFilter));
+      params.set('category', (cat?.name && categoryToSlug(cat.name)) || categoryFilter);
     }
     if (followingOnly) {
       params.set('following', 'true');
@@ -137,9 +145,7 @@ function HomePage() {
         setCurrentPage(1);
         setLastPage(1);
         setFollowingSubscriptionsCount(null);
-        const msg = 'Не удалось загрузить публикации. Попробуйте позже.';
-        setError(msg);
-        toast.error(msg);
+        setError('Не удалось загрузить публикации. Попробуйте позже.');
       }
     } catch {
       if (requestId !== feedRequestIdRef.current) {
@@ -150,15 +156,13 @@ function HomePage() {
       setCurrentPage(1);
       setLastPage(1);
       setFollowingSubscriptionsCount(null);
-      const msg = 'Ошибка соединения с сервером';
-      setError(msg);
-      toast.error(msg);
+      setError('Ошибка соединения с сервером');
     } finally {
       if (requestId === feedRequestIdRef.current) {
         setIsFeedLoading(false);
       }
     }
-  }, [buildFeedParams, toast, setCurrentPage, followingOnly]);
+  }, [buildFeedParams, setCurrentPage, followingOnly]);
 
   useEffect(() => {
     if (!isAuthenticated && followingOnly) {
@@ -181,8 +185,13 @@ function HomePage() {
   }, [searchInput, setSearchQuery]);
 
   useEffect(() => {
+    const trimmed = tagFilterInput.trim();
+    if (trimmed === '') {
+      setTagFilter('');
+      return undefined;
+    }
     const timer = setTimeout(() => {
-      setTagFilter(tagFilterInput.trim());
+      setTagFilter(trimmed);
     }, TAG_FILTER_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [tagFilterInput, setTagFilter]);
@@ -259,6 +268,24 @@ function HomePage() {
     sortDir !== FEED_DEFAULT_SORT_DIR ||
     followingOnly;
 
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (searchInput.trim()) count += 1;
+    if (tagFilterInput.trim()) count += 1;
+    if (categoryFilter) count += 1;
+    if (sortBy !== FEED_DEFAULT_SORT_BY) count += 1;
+    if (sortDir !== FEED_DEFAULT_SORT_DIR) count += 1;
+    if (followingOnly) count += 1;
+    return count;
+  }, [
+    searchInput,
+    tagFilterInput,
+    categoryFilter,
+    sortBy,
+    sortDir,
+    followingOnly,
+  ]);
+
   const emptyFollowingState = useMemo(() => {
     if (!followingOnly || isFeedLoading || error) return null;
     if (followingSubscriptionsCount === null) return null;
@@ -313,6 +340,11 @@ function HomePage() {
               <path d="M7 12h10" />
               <path d="M10 18h4" />
             </svg>
+            {activeFiltersCount > 0 && (
+              <span className="homepage-filters-toggle-badge" aria-hidden="true">
+                {activeFiltersCount > 9 ? '9+' : activeFiltersCount}
+              </span>
+            )}
           </button>
         </div>
         <div className={`homepage-filters-panel${filtersPanelOpen ? ' is-open' : ''}`}>
@@ -334,6 +366,7 @@ function HomePage() {
               <div className="homepage-filter-block homepage-filter-block--following">
                 <label
                   className="homepage-following-toggle"
+                  title="Только публикации авторов, на которых я подписан"
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -351,7 +384,12 @@ function HomePage() {
                     onChange={(e) => setFollowingOnly(e.target.checked)}
                     style={{ accentColor: '#7B0000' }}
                   />
-                  Только публикации авторов, на которых я подписан
+                  <span className="homepage-following-toggle__text homepage-following-toggle__text--full">
+                    Только публикации авторов, на которых я подписан
+                  </span>
+                  <span className="homepage-following-toggle__text homepage-following-toggle__text--short">
+                    Только подписки
+                  </span>
                 </label>
               </div>
             )}
@@ -359,7 +397,10 @@ function HomePage() {
               <label style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.875rem', color: '#111827' }}>Категория:</label>
               <select
                 value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
+                onChange={(e) => {
+                  setCategoryFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
                 style={{
                   padding: '0.35rem 0.75rem',
                   borderRadius: '8px',
@@ -457,7 +498,12 @@ function HomePage() {
             margin: '0 0 1rem 0',
           }}
         >
-          Показано {displayPosts.length} из {feedTotal} · страница {currentPage} из {lastPage}
+          <span className="homepage-feed-meta__full">
+            Показано {displayPosts.length} из {feedTotal} · страница {currentPage} из {lastPage}
+          </span>
+          <span className="homepage-feed-meta__short">
+            {displayPosts.length}/{feedTotal} · {currentPage}/{lastPage}
+          </span>
         </p>
       )}
 
@@ -483,13 +529,18 @@ function HomePage() {
         <nav className="pagination homepage-pagination" aria-label="Навигация по страницам">
           <button
             type="button"
-            className="btn btn-outline"
+            className="btn btn-outline homepage-pagination-nav"
             disabled={currentPage <= 1 || isFeedLoading}
             onClick={() => goToPage(currentPage - 1)}
+            aria-label="Предыдущая страница"
           >
-            ← Предыдущая
+            <span aria-hidden="true">‹</span>
+            <span className="homepage-pagination-nav__label"> Предыдущая</span>
           </button>
-          <div className="homepage-pagination-pages">
+          <span className="homepage-pagination-status" aria-live="polite">
+            Стр. {currentPage} / {lastPage}
+          </span>
+          <div className="homepage-pagination-pages homepage-pagination-pages--scroll">
             {pageNumbers.map((p, idx) => (
               typeof p === 'number' ? (
                 <button
@@ -509,11 +560,13 @@ function HomePage() {
           </div>
           <button
             type="button"
-            className="btn btn-outline"
+            className="btn btn-outline homepage-pagination-nav"
             disabled={currentPage >= lastPage || isFeedLoading}
             onClick={() => goToPage(currentPage + 1)}
+            aria-label="Следующая страница"
           >
-            Следующая →
+            <span className="homepage-pagination-nav__label">Следующая </span>
+            <span aria-hidden="true">›</span>
           </button>
         </nav>
       )}

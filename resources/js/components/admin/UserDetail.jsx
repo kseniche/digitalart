@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
+import { useToast } from '../../contexts/ToastContext';
 import EmptyState from '../common/EmptyState';
 import MediaPreview from '../common/MediaPreview';
 
 function UserDetail({ user, onBack, onUserAction, onShowUserPosts }) {
+  const { toast } = useToast();
   const [userPosts, setUserPosts] = useState([]);
   const [userComments, setUserComments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const userRoles = user.roles?.map((role) => role.name) || [];
+  const [roleValue, setRoleValue] = useState(userRoles.includes('admin') ? 'admin' : 'user');
+  const [roleSaving, setRoleSaving] = useState(false);
 
   useEffect(() => {
     fetchUserDetails();
@@ -46,8 +51,31 @@ function UserDetail({ user, onBack, onUserAction, onShowUserPosts }) {
 
   const isDeleted = user.deleted_at !== null;
   const isBanned = !!user.is_banned;
-  const userRoles = user.roles?.map(role => role.name) || [];
   const isAdminUser = userRoles.includes('admin');
+
+  const handleRoleSave = async () => {
+    setRoleSaving(true);
+    try {
+      const res = await apiFetch(`/api/admin/users/${user.id}/role`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ role: roleValue }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(data.message || 'Роль обновлена');
+      } else {
+        toast.error(data.message || 'Не удалось изменить роль');
+      }
+    } catch {
+      toast.error('Ошибка соединения');
+    } finally {
+      setRoleSaving(false);
+    }
+  };
 
   return (
     <div className="user-detail">
@@ -152,6 +180,32 @@ function UserDetail({ user, onBack, onUserAction, onShowUserPosts }) {
               </div>
             </div>
           </div>
+
+          {!isDeleted && (
+            <div className="user-actions">
+              <h3>Роль на сайте</h3>
+              <div className="action-buttons" style={{ marginBottom: '1rem' }}>
+                <select
+                  className="form-input"
+                  value={roleValue}
+                  onChange={(e) => setRoleValue(e.target.value)}
+                  disabled={roleSaving}
+                  aria-label="Роль пользователя"
+                >
+                  <option value="user">Пользователь</option>
+                  <option value="admin">Администратор</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleRoleSave}
+                  disabled={roleSaving}
+                >
+                  {roleSaving ? 'Сохранение…' : 'Сохранить роль'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {!isAdminUser && (
             <div className="user-actions">

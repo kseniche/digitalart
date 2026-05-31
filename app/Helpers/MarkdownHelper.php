@@ -10,7 +10,7 @@ class MarkdownHelper
 
     /**
      * Конвертирует Markdown в безопасный HTML (критерий 3.3).
-     * Разрешены: p, br, strong, em, a, ul, ol, li, h1, h2, h3, code, pre.
+     * Разрешены: p, br, strong, em, a, ul, ol, li, h1–h4, code, pre, hr.
      */
     public static function toSafeHtml(?string $markdown): string
     {
@@ -29,7 +29,7 @@ class MarkdownHelper
             return htmlspecialchars($markdown, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         }
 
-        $allowed = '<p><br><strong><b><em><i><a><ul><ol><li><h1><h2><h3><h4><code><pre>';
+        $allowed = '<p><br><strong><b><em><i><a><ul><ol><li><h1><h2><h3><h4><code><pre><hr>';
         $html = strip_tags($html, $allowed);
 
         $html = preg_replace_callback('/<a\s+([^>]*?)>/i', function ($m) {

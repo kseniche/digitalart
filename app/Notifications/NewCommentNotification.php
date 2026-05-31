@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Comment;
+use App\Support\MailAppeal;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -45,6 +46,7 @@ class NewCommentNotification extends Notification
             ->line('Текст комментария: ' . $preview)
             ->action('Посмотреть публикацию', url('/post/' . ($post->id ?? '')))
             ->line('Если вы не хотите получать такие уведомления — отключите их в настройках профиля.')
+            ->line(MailAppeal::supportLine())
             ->salutation('С уважением, команда проекта');
     }
 }

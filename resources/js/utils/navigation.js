@@ -8,7 +8,11 @@ export function getReturnState(location) {
 
   const path = `${location?.pathname ?? ''}${location?.search ?? ''}`;
 
-  if (!path || path.startsWith('/post/')) {
+  if (!path || path === '/') {
+    return { from: '/' };
+  }
+
+  if (path.startsWith('/post/')) {
     return { from: '/' };
   }
 

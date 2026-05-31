@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import Alert from '../common/Alert';
+import {
+  POST_TAG_MAX_COUNT,
+  POST_TAGS_INPUT_MAX,
+  validateTagsInput,
+} from '../../utils/postTagLimits';
+import { FIELD_LIMITS } from '../../constants/fieldLimits';
+import CharCounter from '../common/CharCounter';
+import { isNearLimit, isOverLimit, validateMaxLength, validateRequired } from '../../utils/fieldValidation';
+import MarkdownTextarea from '../common/MarkdownTextarea';
 import '../../../css/app.css';
 
 function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSettings = false }) {
@@ -74,14 +83,25 @@ function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSe
   const validateForm = () => {
     const newErrors = {};
 
-    if (!formData.title.trim()) {
-      newErrors.title = 'Название обязательно';
-    } else if (formData.title.length > 255) {
-      newErrors.title = 'Название не должно превышать 255 символов';
+    const titleReq = validateRequired(formData.title, 'Название');
+    if (titleReq) {
+      newErrors.title = titleReq;
+    } else {
+      const titleMax = validateMaxLength(formData.title, FIELD_LIMITS.post.title.max, 'Название');
+      if (titleMax) newErrors.title = titleMax;
     }
 
-    if (!formData.description.trim()) {
-      newErrors.description = 'Описание обязательно';
+    const descReq = validateRequired(formData.description, 'Описание');
+    if (descReq) {
+      newErrors.description = descReq;
+    } else {
+      const descMax = validateMaxLength(formData.description, FIELD_LIMITS.post.description.max, 'Описание');
+      if (descMax) newErrors.description = descMax;
+    }
+
+    const tagCheck = validateTagsInput(formData.tags);
+    if (!tagCheck.isValid) {
+      Object.assign(newErrors, tagCheck.errors);
     }
 
     setErrors(newErrors);
@@ -109,18 +129,13 @@ function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSe
   if (!post) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
-        <button className="modal-close" onClick={onClose}>
+    <div className="modal-overlay modal-overlay--sheet" onClick={onClose}>
+      <div className="modal-content modal-content--edit-post" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Закрыть">
           ×
         </button>
-        
-        <h2 style={{ 
-          marginBottom: '1.5rem', 
-          textAlign: 'center', 
-          color: '#111827', 
-          fontFamily: 'JetBrains Mono, monospace' 
-        }}>
+
+        <h2 className="modal-content__title">
           Редактировать публикацию
         </h2>
 
@@ -139,12 +154,14 @@ function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSe
               onChange={handleChange}
               className={`form-input ${errors.title ? 'error' : ''}`}
               placeholder="Введите название работы"
-              maxLength={255}
+              maxLength={FIELD_LIMITS.post.title.max}
             />
-            <div className="ui-form-help ui-form-help-row">
-              <span>Обязательное поле</span>
-              <span>{formData.title.length}/255</span>
-            </div>
+            <CharCounter
+              value={formData.title}
+              max={FIELD_LIMITS.post.title.max}
+              min={FIELD_LIMITS.post.title.min}
+              required
+            />
             {errors.title && (
               <div className="form-error" style={{ marginTop: '0.5rem' }}>
                 {errors.title}
@@ -156,19 +173,23 @@ function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSe
             <label htmlFor="description" className="form-label">
               Описание *
             </label>
-            <textarea
+            <MarkdownTextarea
               id="description"
               name="description"
               value={formData.description}
               onChange={handleChange}
-              className={`form-input ${errors.description ? 'error' : ''}`}
+              error={!!errors.description}
               placeholder="Опишите вашу работу"
               rows={6}
-              style={{ resize: 'vertical' }}
+              helpText={null}
+              maxLength={FIELD_LIMITS.post.description.max}
             />
-            <div className="ui-form-help">
-              Обязательное поле. Markdown: **жирный**, *курсив*, - список, [ссылка](url).
-            </div>
+            <CharCounter
+              value={formData.description}
+              max={FIELD_LIMITS.post.description.max}
+              min={FIELD_LIMITS.post.description.min}
+              required
+            />
             {errors.description && (
               <div className="form-error" style={{ marginTop: '0.5rem' }}>
                 {errors.description}
@@ -213,24 +234,26 @@ function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSe
           {!lockPublishSettings && !formData.is_draft && (
             <div className="form-group">
               <span className="form-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Публикация</span>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace' }}>
+              <div className="publish-options">
+                <label className="publish-option">
                   <input
                     type="radio"
                     name="publish_mode"
                     checked={formData.publish_mode === 'now'}
                     onChange={() => setFormData(prev => ({ ...prev, publish_mode: 'now' }))}
                   />
-                  Опубликовать сразу
+                  <span className="publish-option__label publish-option__label--full">Опубликовать сразу</span>
+                  <span className="publish-option__label publish-option__label--short">Сразу</span>
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace' }}>
+                <label className="publish-option">
                   <input
                     type="radio"
                     name="publish_mode"
                     checked={formData.publish_mode === 'schedule'}
                     onChange={() => setFormData(prev => ({ ...prev, publish_mode: 'schedule' }))}
                   />
-                  Запланировать на дату
+                  <span className="publish-option__label publish-option__label--full">Запланировать на дату</span>
+                  <span className="publish-option__label publish-option__label--short">По дате</span>
                 </label>
                 {formData.publish_mode === 'schedule' && (
                   <input
@@ -268,11 +291,40 @@ function EditPostModal({ post, serverErrors = {}, onClose, onSave, lockPublishSe
               value={formData.tags}
               onChange={handleChange}
               className="form-input"
+              maxLength={POST_TAGS_INPUT_MAX}
               placeholder="цифровая живопись, пейзаж, photoshop (через запятую)"
+              aria-describedby="edit-tags-help edit-tags-counter"
             />
-            <div className="ui-form-help">
-              Теги разделяйте запятыми
+            <div className="ui-form-help" id="edit-tags-help">
+              До {POST_TAG_MAX_COUNT} тегов через запятую.
             </div>
+            <div
+              id="edit-tags-counter"
+              className={`ui-form-help ui-form-help-row${
+                (() => {
+                  const { charCount } = validateTagsInput(formData.tags);
+                  if (isOverLimit(charCount, POST_TAGS_INPUT_MAX)) return ' char-counter--over';
+                  if (isNearLimit(charCount, POST_TAGS_INPUT_MAX)) return ' char-counter--warn';
+                  return '';
+                })()
+              }`}
+              style={{ marginTop: '0.25rem' }}
+              aria-live="polite"
+            >
+              {(() => {
+                const { tagCount, charCount } = validateTagsInput(formData.tags);
+                return (
+                  <span>
+                    Тегов: {tagCount} / {POST_TAG_MAX_COUNT} · {charCount} / {POST_TAGS_INPUT_MAX} символов
+                  </span>
+                );
+              })()}
+            </div>
+            {errors.tags && (
+              <div className="form-error" style={{ marginTop: '0.5rem' }}>
+                {errors.tags}
+              </div>
+            )}
           </div>
 
           <div className="ui-actions-row" style={{ marginTop: '1.5rem' }}>

@@ -67,6 +67,57 @@ class PostApiTest extends TestCase
         ]);
     }
 
+    /** Слишком много тегов — 422, не 500 (переполнение поля tags). */
+    public function test_create_post_rejects_excessive_tags_with_422(): void
+    {
+        Storage::fake('s3');
+
+        $user = User::factory()->create();
+        $category = Category::create(['name' => 'Тестовая категория']);
+        $token = $user->createToken('test-token')->plainTextToken;
+        $file = UploadedFile::fake()->create('artwork.jpg', 100, 'image/jpeg');
+
+        $tags = implode(',', array_map(static fn ($i) => "tag{$i}", range(1, 25)));
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+        ])->postJson('/api/posts', [
+            'title' => 'Работа с тегами',
+            'description' => 'Описание',
+            'media_file' => $file,
+            'media_type' => 'image',
+            'tags' => $tags,
+            'category_id' => $category->id,
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors(['tags']);
+        $this->assertDatabaseMissing('posts', ['post_title' => 'Работа с тегами']);
+    }
+
+    public function test_create_post_rejects_oversized_description_with_422(): void
+    {
+        Storage::fake('s3');
+
+        $user = User::factory()->create();
+        $category = Category::create(['name' => 'Категория для лимита']);
+        $token = $user->createToken('test-token')->plainTextToken;
+        $file = UploadedFile::fake()->create('artwork.jpg', 100, 'image/jpeg');
+        $max = (int) config('field_limits.post.description.max', 50000);
+        $tooLong = str_repeat('а', $max + 1);
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+        ])->postJson('/api/posts', [
+            'title' => 'Длинное описание',
+            'description' => $tooLong,
+            'media_file' => $file,
+            'media_type' => 'image',
+            'category_id' => $category->id,
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors(['description']);
+    }
+
     /** Scenario 6: Exceptional — no auth. Попытка создания поста без авторизации (401). */
     public function test_unauthenticated_user_cannot_create_post(): void
     {

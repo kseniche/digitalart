@@ -2,11 +2,16 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Models\Comment;
 use App\Models\CommentReport;
+use App\Notifications\CommentPublishedNotification;
 use App\Notifications\CommentRemovedByAdminNotification;
+use App\Notifications\CommentRestoredNotification;
 use App\Services\CommentModerationService;
+use App\Services\UserNotificationService;
+use App\Support\ContentRetention;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -14,18 +19,30 @@ use Illuminate\Support\Facades\Log;
 class AdminCommentController extends Controller
 {
     public function __construct(
-        private readonly CommentModerationService $moderation
+        private readonly CommentModerationService $moderation,
+        private readonly UserNotificationService $userNotifications,
     ) {}
 
     public function stats(): JsonResponse
     {
         $reviewDays = (int) config('comment_moderation.auto_review_days', 7);
+        $graceDays = ContentRetention::graceDays();
+        $expiringDays = (int) config('content_retention.comment_queue_expiring_days', 2);
 
         $pendingReview = Comment::query()
             ->where('moderation_status', 'approved')
             ->whereNull('deleted_at')
             ->where('is_hidden', false)
             ->whereNull('admin_reviewed_at')
+            ->where('created_at', '>', now()->subDays($reviewDays))
+            ->count();
+
+        $expiringSoon = Comment::query()
+            ->where('moderation_status', 'approved')
+            ->whereNull('deleted_at')
+            ->where('is_hidden', false)
+            ->whereNull('admin_reviewed_at')
+            ->where('created_at', '<=', now()->subDays($reviewDays - $expiringDays))
             ->where('created_at', '>', now()->subDays($reviewDays))
             ->count();
 
@@ -45,12 +62,18 @@ class AdminCommentController extends Controller
             ->where('deleted_at', '>=', now()->subDays(30))
             ->count();
 
+        $pendingPurge = Comment::onlyTrashed()
+            ->where('deleted_at', '>=', now()->subDays($graceDays))
+            ->count();
+
         return response()->json([
             'pending_review' => $pendingReview,
+            'expiring_soon' => $expiringSoon,
             'reports' => $reports,
             'hidden' => $hidden,
             'total' => $total,
             'deleted_last_30_days' => $deletedLast30,
+            'pending_permanent_delete' => $pendingPurge,
         ]);
     }
 
@@ -60,6 +83,9 @@ class AdminCommentController extends Controller
             $tab = $request->input('tab', 'recent');
             $status = $request->input('status', 'all');
             $reviewDays = (int) config('comment_moderation.auto_review_days', 7);
+            $graceDays = ContentRetention::graceDays();
+            $expiringDays = (int) config('content_retention.comment_queue_expiring_days', 2);
+            $sortDir = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
             $query = Comment::with([
                 'author' => fn ($q) => $q->withTrashed(),
@@ -90,6 +116,16 @@ class AdminCommentController extends Controller
                     'with_reports' => $query->whereNull('comments.deleted_at')
                         ->whereHas('reports'),
                     'deleted' => $query->whereNotNull('comments.deleted_at'),
+                    'pending_purge' => $query->whereNotNull('comments.deleted_at')
+                        ->where('comments.deleted_at', '>=', now()->subDays($graceDays)),
+                    'recently_deleted' => $query->whereNotNull('comments.deleted_at')
+                        ->where('comments.deleted_at', '>=', now()->subDays($graceDays)),
+                    'expiring_soon' => $query->where('moderation_status', 'approved')
+                        ->whereNull('comments.deleted_at')
+                        ->where('comments.is_hidden', false)
+                        ->whereNull('comments.admin_reviewed_at')
+                        ->where('comments.created_at', '<=', now()->subDays($reviewDays - $expiringDays))
+                        ->where('comments.created_at', '>', now()->subDays($reviewDays)),
                     default => null,
                 };
             }
@@ -100,7 +136,7 @@ class AdminCommentController extends Controller
             }
 
             $perPage = min(max((int) $request->input('per_page', 15), 1), 50);
-            $comments = $query->orderByDesc('comments.created_at')->paginate($perPage);
+            $comments = $query->orderBy('comments.created_at', $sortDir)->paginate($perPage);
 
             $includeReportDetails = $tab === 'reports' || $status === 'with_reports';
 
@@ -172,6 +208,11 @@ class AdminCommentController extends Controller
 
             $this->moderation->dismissAllReports($comment);
 
+            $this->userNotifications->notifyCommentReporters(
+                $comment,
+                'Модератор рассмотрел жалобу. Комментарий остаётся на сайте.'
+            );
+
             return response()->json(['message' => 'Жалобы сняты, комментарий остаётся на сайте']);
         } catch (\Throwable $e) {
             Log::error('Admin dismissReports error: '.$e->getMessage());
@@ -183,16 +224,49 @@ class AdminCommentController extends Controller
     public function destroy(Request $request, Comment $comment): JsonResponse
     {
         try {
+            $data = $request->validate([
+                'reason' => 'nullable|string|max:1000',
+            ]);
+            $reason = trim((string) ($data['reason'] ?? ''));
             $comment->loadMissing(['author', 'post']);
             $author = $comment->author;
 
-            if ($author) {
-                $author->notify(new CommentRemovedByAdminNotification($comment));
+            if ($comment->trashed()) {
+                return response()->json(['message' => 'Комментарий уже удалён'], 422);
             }
 
-            $this->moderation->forceDeleteComment($comment);
+            $this->moderation->softDeleteByAdmin($comment);
 
-            return response()->json(['message' => 'Комментарий удалён без возможности восстановления']);
+            if ($author) {
+                $fresh = $comment->fresh();
+                $fresh->loadMissing('post');
+                $this->userNotifications->notify(
+                    $author,
+                    UserNotificationType::CommentDeleted,
+                    [
+                        'delete_context' => 'Ваш комментарий удалён администратором.',
+                        'title' => $fresh->post?->post_title ?? 'Публикация',
+                        'post_id' => (string) ($fresh->post_id ?? ''),
+                        'reason' => $reason,
+                    ],
+                    new CommentRemovedByAdminNotification(
+                        $fresh,
+                        $reason !== '' ? $reason : null,
+                        now()
+                    ),
+                    ['comment_id' => $fresh->id, 'post_id' => $fresh->post_id]
+                );
+                $this->userNotifications->notifyCommentReporters(
+                    $fresh,
+                    'По результатам проверки комментарий удалён модератором.'
+                );
+            }
+
+            $days = ContentRetention::graceDays();
+
+            return response()->json([
+                'message' => "Комментарий удалён. Восстановление доступно в течение {$days} дней.",
+            ]);
         } catch (\Throwable $e) {
             Log::error('Admin destroy comment error: '.$e->getMessage());
 
@@ -207,9 +281,14 @@ class AdminCommentController extends Controller
                 'words' => 'nullable|array',
                 'words.*' => 'string|max:255',
                 'word' => 'nullable|string|max:255',
+                'reason' => 'nullable|string|max:1000',
             ]);
 
             $comment = Comment::withTrashed()->findOrFail($id);
+            if ($comment->trashed()) {
+                return response()->json(['message' => 'Комментарий уже удалён'], 422);
+            }
+
             $words = $data['words'] ?? [];
             if (! empty($data['word'])) {
                 $words[] = $data['word'];
@@ -218,17 +297,95 @@ class AdminCommentController extends Controller
                 $this->moderation->addBannedWords($words);
             }
 
+            $reason = trim((string) ($data['reason'] ?? ''));
             $comment->loadMissing('author');
-            if ($comment->author) {
-                $comment->author->notify(new CommentRemovedByAdminNotification($comment));
-            }
-            $this->moderation->forceDeleteComment($comment);
+            $this->moderation->softDeleteByAdmin($comment);
 
-            return response()->json(['message' => 'Комментарий удалён, слова добавлены в словарь']);
+            if ($comment->author) {
+                $fresh = $comment->fresh();
+                $fresh->loadMissing('post');
+                $this->userNotifications->notify(
+                    $comment->author,
+                    UserNotificationType::CommentDeleted,
+                    [
+                        'delete_context' => 'Ваш комментарий удалён администратором.',
+                        'title' => $fresh->post?->post_title ?? 'Публикация',
+                        'post_id' => (string) ($fresh->post_id ?? ''),
+                        'reason' => $reason,
+                    ],
+                    new CommentRemovedByAdminNotification(
+                        $fresh,
+                        $reason !== '' ? $reason : null,
+                        now()
+                    ),
+                    ['comment_id' => $fresh->id, 'post_id' => $fresh->post_id]
+                );
+                $this->userNotifications->notifyCommentReporters(
+                    $fresh,
+                    'По результатам проверки комментарий удалён модератором.'
+                );
+            }
+
+            $days = ContentRetention::graceDays();
+
+            return response()->json([
+                'message' => "Комментарий удалён, слова добавлены в словарь. Восстановление — {$days} дн.",
+            ]);
         } catch (\Throwable $e) {
             Log::error('Admin destroyWithBannedWords error: '.$e->getMessage());
 
             return response()->json(['message' => 'Ошибка при удалении'], 500);
+        }
+    }
+
+    public function restore(int $id): JsonResponse
+    {
+        try {
+            $comment = Comment::withTrashed()
+                ->with(['post' => fn ($q) => $q->withTrashed()])
+                ->findOrFail($id);
+
+            if (! $comment->trashed()) {
+                return response()->json(['message' => 'Комментарий не удалён'], 422);
+            }
+
+            if (! ContentRetention::canRestore($comment->deleted_at)) {
+                return response()->json([
+                    'message' => 'Срок восстановления истёк. Комментарий будет удалён окончательно.',
+                ], 422);
+            }
+
+            $post = $comment->post;
+            if (! $post || $post->trashed()) {
+                return response()->json(['message' => 'Публикация недоступна для восстановления комментария'], 422);
+            }
+
+            $wasApproved = $comment->moderation_status === 'approved' && ! $comment->is_hidden;
+            $comment->restore();
+
+            if ($wasApproved && $post->isPubliclyVisible()) {
+                $post->increment('comment_count');
+            }
+
+            $comment->loadMissing(['author', 'post']);
+            if ($comment->author) {
+                $this->userNotifications->notify(
+                    $comment->author,
+                    UserNotificationType::CommentRestored,
+                    [
+                        'title' => $comment->post?->post_title ?? 'Публикация',
+                        'post_id' => (string) ($comment->post_id ?? ''),
+                    ],
+                    new CommentRestoredNotification($comment),
+                    ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
+                );
+            }
+
+            return response()->json(['message' => 'Комментарий восстановлен']);
+        } catch (\Throwable $e) {
+            Log::error('Admin restore comment error: '.$e->getMessage());
+
+            return response()->json(['message' => 'Ошибка при восстановлении комментария'], 500);
         }
     }
 
@@ -243,6 +400,9 @@ class AdminCommentController extends Controller
                 ->findOrFail($id);
 
             if ($comment->deleted_at && (bool) $comment->auto_moderation_passed === false) {
+                if (! ContentRetention::canRestore($comment->deleted_at)) {
+                    return response()->json(['message' => 'Срок восстановления истёк'], 422);
+                }
                 $comment->restore();
             } elseif ($comment->deleted_at) {
                 return response()->json(['message' => 'Нельзя одобрить удалённый комментарий'], 422);
@@ -267,11 +427,25 @@ class AdminCommentController extends Controller
                 $this->moderation->confirmReview($comment);
             }
 
+            $comment->loadMissing(['author', 'post']);
+            if ($comment->author) {
+                $this->userNotifications->notify(
+                    $comment->author,
+                    UserNotificationType::CommentPublished,
+                    [
+                        'title' => $comment->post?->post_title ?? 'Публикация',
+                        'post_id' => (string) ($comment->post_id ?? ''),
+                    ],
+                    new CommentPublishedNotification($comment),
+                    ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
+                );
+            }
+
             return response()->json(['message' => 'Комментарий одобрен']);
         } catch (\Throwable $e) {
             Log::error('Admin approve comment error: '.$e->getMessage());
 
-            return response()->json(['message' => 'Ошибка при одобрении комментария'], 500);
+            return response()->json(['message' => 'Ошибка при одобрении комментария'], 422);
         }
     }
 
@@ -280,6 +454,16 @@ class AdminCommentController extends Controller
         $comment->setAttribute('author_deleted', (bool) optional($comment->author)->deleted_at);
         $comment->setAttribute('reports_count', (int) ($comment->reports_count ?? 0));
         $comment->setAttribute('is_admin_reviewed', $comment->admin_reviewed_at !== null);
+
+        foreach (ContentRetention::trashedMeta($comment->deleted_at) as $key => $value) {
+            $comment->setAttribute($key, $value);
+        }
+
+        if ($comment->deleted_at === null) {
+            foreach (ContentRetention::commentQueueMeta($comment->created_at, $comment->admin_reviewed_at) as $key => $value) {
+                $comment->setAttribute($key, $value);
+            }
+        }
 
         if ($withReports) {
             $reports = CommentReport::query()

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import ConfirmModal from '../modals/ConfirmModal';
 import EmptyState from '../common/EmptyState';
@@ -31,12 +31,10 @@ function AdminTags() {
       } else {
         const msg = 'Не удалось загрузить теги';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setLoading(false);
     }

@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import LoginModal from './modals/LoginModal';
 import RegisterModal from './modals/RegisterModal';
 import UserDropdown from './UserDropdown';
+import NotificationsBell from './NotificationsBell';
 import '../../css/app.css';
 
 function Header() {
@@ -48,6 +49,8 @@ function Header() {
         
         <div className="nav-buttons">
           {user ? (
+            <>
+            <NotificationsBell />
             <div className="user-menu">
               <div className="user-info user-info-inline">
                 {/* Показываем бейдж администратора */}
@@ -80,6 +83,7 @@ function Header() {
                 />
               )}
             </div>
+            </>
           ) : (
             <>
               <button

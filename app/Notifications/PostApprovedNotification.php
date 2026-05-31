@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Post;
+use App\Support\MailAppeal;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -33,6 +34,7 @@ class PostApprovedNotification extends Notification
             ->greeting('Здравствуйте!')
             ->line("Ваша публикация «{$title}» прошла модерацию и опубликована.")
             ->action('Открыть публикацию', url('/post/' . $this->post->id))
+            ->line(MailAppeal::supportLine())
             ->salutation('С уважением, команда проекта');
     }
 }

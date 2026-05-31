@@ -3,7 +3,7 @@
 namespace Tests\Unit;
 
 use App\Support\PostTags;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class PostTagsTest extends TestCase
 {
@@ -42,5 +42,21 @@ class PostTagsTest extends TestCase
     public function test_normalize_for_storage_trims_and_skips_empty(): void
     {
         $this->assertSame(['art'], PostTags::normalizeForStorage(' art , , '));
+    }
+
+    public function test_normalize_and_validate_rejects_too_many_tags(): void
+    {
+        config(['post_tags.max_count' => 3]);
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        PostTags::normalizeAndValidate('a, b, c, d');
+    }
+
+    public function test_normalize_and_validate_accepts_within_limits(): void
+    {
+        config(['post_tags.max_count' => 5, 'post_tags.max_tag_length' => 50, 'post_tags.max_input_length' => 500]);
+
+        $result = PostTags::normalizeAndValidate('digital-art, pixel');
+        $this->assertSame(['digital-art', 'pixel'], $result);
     }
 }

@@ -10,7 +10,7 @@ function UserDropdown({ user, onClose, onLogout }) {
         Мой профиль
       </Link>
       <Link to="/create" className="dropdown-item" onClick={onClose}>
-        Добавить работу
+        Работу добавить
       </Link>
       <Link to="/settings" className="dropdown-item" onClick={onClose}>
         Настройки

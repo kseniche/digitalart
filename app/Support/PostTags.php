@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Разбор и фильтрация тегов публикаций (JSON-массив, JSON-строка CSV, plain CSV).
@@ -74,6 +75,44 @@ class PostTags
         }
 
         return array_values($result);
+    }
+
+    /**
+     * Нормализация с проверкой лимитов из config/post_tags.php.
+     *
+     * @return list<string>
+     *
+     * @throws ValidationException
+     */
+    public static function normalizeAndValidate(mixed $value): array
+    {
+        $raw = is_string($value) ? $value : '';
+        $maxInput = (int) config('post_tags.max_input_length', 500);
+        if (mb_strlen($raw) > $maxInput) {
+            throw ValidationException::withMessages([
+                'tags' => "Строка тегов не должна превышать {$maxInput} символов.",
+            ]);
+        }
+
+        $normalized = self::normalizeForStorage($value);
+        $maxCount = (int) config('post_tags.max_count', self::MAX_JSON_ARRAY_SLOTS);
+        $maxTagLength = (int) config('post_tags.max_tag_length', 50);
+
+        if (count($normalized) > $maxCount) {
+            throw ValidationException::withMessages([
+                'tags' => "Укажите не более {$maxCount} тегов.",
+            ]);
+        }
+
+        foreach ($normalized as $tag) {
+            if (mb_strlen($tag) > $maxTagLength) {
+                throw ValidationException::withMessages([
+                    'tags' => "Каждый тег не должен превышать {$maxTagLength} символов.",
+                ]);
+            }
+        }
+
+        return $normalized;
     }
 
     public static function anyContainsSubstring(array $tags, string $needle): bool

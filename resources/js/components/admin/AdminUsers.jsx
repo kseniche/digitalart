@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import UserCard from './UserCard';
 import UserDetail from './UserDetail';
@@ -9,6 +9,8 @@ import EmptyState from '../common/EmptyState';
 import Alert from '../common/Alert';
 import MediaPreview from '../common/MediaPreview';
 import AdminModerationStats from './AdminModerationStats';
+import FeedTagLink from '../common/FeedTagLink';
+import FeedCategoryLink from '../common/FeedCategoryLink';
 
 function AdminUsers() {
   const toast = useToast().toast;
@@ -109,12 +111,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось загрузить список пользователей. Попробуйте позже.';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -172,12 +172,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось удалить пользователя';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -201,12 +199,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось восстановить пользователя';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -242,12 +238,10 @@ function AdminUsers() {
         const validationMsg = data.errors?.ban_reason?.[0];
         const msg = validationMsg || data.message || 'Не удалось заблокировать пользователя';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setBanLoading(false);
     }
@@ -276,12 +270,10 @@ function AdminUsers() {
         const data = await response.json().catch(() => ({}));
         const msg = data.message || 'Не удалось разблокировать пользователя';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setUnbanLoading(false);
       setConfirmUnban({ open: false, userId: null });
@@ -309,12 +301,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось загрузить публикации пользователя';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setUserPostsLoading(false);
     }
@@ -338,12 +328,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось загрузить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setPostDetailLoading(false);
     }
@@ -371,12 +359,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось удалить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -402,12 +388,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось одобрить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -430,12 +414,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось удалить комментарий';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -458,12 +440,10 @@ function AdminUsers() {
       } else {
         const msg = 'Не удалось одобрить комментарий';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -558,9 +538,16 @@ function AdminUsers() {
 
                 <div className="admin-tags-row">
                   {tags.map((tag, idx) => (
-                    <span key={idx} className="admin-tag">#{String(tag).trim()}</span>
+                    <FeedTagLink key={idx} tag={String(tag).trim()} className="admin-tag" />
                   ))}
-                  {post?.category?.name && <span className="admin-tag">Категория: {post.category.name}</span>}
+                  {post?.category?.name && (
+                    <FeedCategoryLink
+                      categoryId={post.category_id}
+                      categoryName={post.category.name}
+                      className="admin-tag"
+                      prefix="Категория: "
+                    />
+                  )}
                 </div>
 
                 <div className="user-card__actions admin-detail-actions">
@@ -822,7 +809,7 @@ function AdminUsers() {
         <div className="admin-filters admin-filters--sticky">
           <input
             type="text"
-            placeholder="Поиск по имени, email или username..."
+            placeholder="Поиск по имени, почте или логину..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);

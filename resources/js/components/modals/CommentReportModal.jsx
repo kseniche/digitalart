@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
+import CharCounter from '../common/CharCounter';
+import { FIELD_LIMITS } from '../../constants/fieldLimits';
+import { mapApiValidationErrors } from '../../utils/apiValidation';
+import { validateMaxLength } from '../../utils/fieldValidation';
+
+const OTHER_TEXT_LIMIT = FIELD_LIMITS.commentReport.otherText;
 
 function CommentReportModal({ open, commentId, onClose, onSuccess }) {
   const [reasons, setReasons] = useState([]);
@@ -32,6 +38,11 @@ function CommentReportModal({ open, commentId, onClose, onSuccess }) {
       setError('Опишите причину жалобы');
       return;
     }
+    const otherMax = validateMaxLength(otherText, OTHER_TEXT_LIMIT.max, 'Описание жалобы');
+    if (otherMax) {
+      setError(otherMax);
+      return;
+    }
     setLoading(true);
     try {
       const res = await apiFetch(`/api/comments/${commentId}/report`, {
@@ -41,7 +52,12 @@ function CommentReportModal({ open, commentId, onClose, onSuccess }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.message || 'Не удалось отправить жалобу');
+        if (res.status === 422 && data.errors) {
+          const mapped = mapApiValidationErrors(data.errors);
+          setError(mapped.other_text || data.message || 'Проверьте форму жалобы');
+        } else {
+          setError(data.message || 'Не удалось отправить жалобу');
+        }
         return;
       }
       onSuccess?.(data.message);
@@ -76,8 +92,9 @@ function CommentReportModal({ open, commentId, onClose, onSuccess }) {
                 rows={3}
                 value={otherText}
                 onChange={(e) => setOtherText(e.target.value)}
-                maxLength={1000}
+                maxLength={OTHER_TEXT_LIMIT.max}
               />
+              <CharCounter value={otherText} max={OTHER_TEXT_LIMIT.max} required={false} hint="Пояснение к жалобе" />
             </div>
           )}
           {error && <div className="form-error" style={{ marginBottom: '1rem' }}>{error}</div>}

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Category;
 use App\Models\Follower;
 use App\Models\Post;
 use App\Support\PostTags;
@@ -102,10 +103,12 @@ class FeedController extends Controller
                 }
             }
 
-            // 3) Фильтр по категории: ?category=3 или ?category_id=3
-            $categoryId = $request->input('category_id', $request->input('category'));
-            if ($categoryId !== null && $categoryId !== '' && (int) $categoryId > 0) {
-                $query->where('category_id', (int) $categoryId);
+            // 3) Фильтр по категории: ?category=3, ?category_id=3 или slug имени (?category=digital-painting)
+            $categoryId = $this->resolveCategoryFilterParam(
+                $request->input('category_id', $request->input('category'))
+            );
+            if ($categoryId > 0) {
+                $query->where('category_id', $categoryId);
             }
 
             // ——— 2.3.2–2.3.4 Сортировка ———
@@ -244,5 +247,40 @@ class FeedController extends Controller
     private function applyTagFilter($query, string $tag): void
     {
         PostTags::applyFilter($query, $tag);
+    }
+
+    /**
+     * ID категории из числового id или slug имени (как в URL ленты).
+     */
+    private function resolveCategoryFilterParam(mixed $param): int
+    {
+        if ($param === null || $param === '') {
+            return 0;
+        }
+        $raw = trim((string) $param);
+        if ($raw === '') {
+            return 0;
+        }
+        if (ctype_digit($raw)) {
+            return (int) $raw;
+        }
+        $slug = mb_strtolower($raw);
+        foreach (Category::query()->get(['id', 'name']) as $category) {
+            if ($this->categoryNameToSlug((string) $category->name) === $slug) {
+                return (int) $category->id;
+            }
+        }
+
+        return 0;
+    }
+
+    private function categoryNameToSlug(string $name): string
+    {
+        $s = mb_strtolower(trim($name));
+        $s = preg_replace('/\s+/u', '-', $s) ?? $s;
+        $s = preg_replace('/[^\p{L}\p{N}-]+/u', '', $s) ?? $s;
+        $s = preg_replace('/-+/', '-', $s) ?? $s;
+
+        return trim($s, '-');
     }
 }

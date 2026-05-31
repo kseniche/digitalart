@@ -2,15 +2,22 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Models\Post;
+use App\Models\User;
+use App\Notifications\PostPendingModerationNotification;
+use App\Notifications\PostRemovedByAdminNotification;
 use App\Services\AutoModerationService;
+use App\Services\UserNotificationService;
+use App\Support\MediaUploadHelper;
 use App\Support\PostTags;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -18,7 +25,8 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 class PostController extends Controller
 {
     public function __construct(
-        private readonly AutoModerationService $autoModerationService
+        private readonly AutoModerationService $autoModerationService,
+        private readonly UserNotificationService $userNotifications,
     ) {}
 
     private function hasPostColumn(string $column): bool
@@ -116,12 +124,20 @@ class PostController extends Controller
         Log::info('Начало создания поста', [
             'user_id' => $request->user()->id,
             'request_data' => $request->except(['media_file']),
-            'has_media_file' => $request->hasFile('media_file')
+            'has_media_file' => $request->hasFile('media_file'),
+            'content_length' => $request->server('CONTENT_LENGTH'),
+            'php_upload_max' => ini_get('upload_max_filesize'),
+            'php_post_max' => ini_get('post_max_size'),
         ]);
+
+        MediaUploadHelper::assertRequestFilePresent($request, 'media_file');
 
         $validationMessages = [
             'title.required' => 'Укажите название работы.',
             'description.required' => 'Укажите описание работы.',
+            'description.max' => 'Описание не должно превышать :max символов.',
+            'title.max' => 'Название не должно превышать :max символов.',
+            'tags.max' => 'Строка тегов не должна превышать :max символов.',
             'category_id.required' => 'Выберите категорию.',
             'category_id.exists' => 'Выбранная категория не найдена.',
             'media_type.required' => 'Укажите тип медиа.',
@@ -134,9 +150,9 @@ class PostController extends Controller
         ];
 
         $data = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'required|string',
-            'tags' => 'nullable|string',
+            'title' => 'required|string|max:'.(int) config('field_limits.post.title.max', 255),
+            'description' => 'required|string|max:'.(int) config('field_limits.post.description.max', 50000),
+            'tags' => $this->tagsValidationRules(),
             'category_id' => 'required|exists:categories,id',
             'is_draft' => 'sometimes|boolean',
             'published_at' => 'nullable|date',
@@ -144,28 +160,18 @@ class PostController extends Controller
             'media_file' => [
                 'required',
                 'file',
-                'max:51200',
-                function (string $attribute, mixed $value, \Closure $fail) use ($request) {
-                    if (!$value instanceof \Illuminate\Http\UploadedFile) {
-                        $fail('Файл не загружен.');
-                        return;
-                    }
-
-                    $mediaType = (string) $request->input('media_type', 'image');
-                    $mime = (string) $value->getMimeType();
-                    $imageMimes = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp'];
-                    $videoMimes = ['video/mp4', 'video/webm', 'video/quicktime'];
-
-                    if ($mediaType === 'image' && !in_array($mime, $imageMimes, true)) {
-                        $fail('Для media_type=image допустимы только изображения JPEG, PNG, JPG, GIF, WebP.');
-                    }
-
-                    if ($mediaType === 'video' && !in_array($mime, $videoMimes, true)) {
-                        $fail('Для media_type=video допустимы только видео MP4, WebM, MOV.');
-                    }
-                },
+                'max:'.MediaUploadHelper::MAX_KILOBYTES,
             ],
         ], $validationMessages);
+
+        $uploadedFile = $request->file('media_file');
+        if ($uploadedFile instanceof \Illuminate\Http\UploadedFile) {
+            MediaUploadHelper::assertMimeForMediaType(
+                (string) $request->input('media_type', 'image'),
+                $uploadedFile,
+                'media_file'
+            );
+        }
 
         $mediaDisk = $this->resolveMediaDisk();
 
@@ -198,7 +204,7 @@ class PostController extends Controller
 
         $imagePath = $uploaded;
 
-        // Теги: в модели Post поле `tags` приведено к cast array — в create передаём массив.
+        // Теги: лимиты проверены в rules; нормализуем для сохранения.
         $tagsForModel = PostTags::normalizeForStorage($data['tags'] ?? '');
 
         $isDraft = !empty($data['is_draft']);
@@ -253,6 +259,10 @@ class PostController extends Controller
         }
 
         $post = Post::create($createPayload);
+
+        if (! $isDraft) {
+            $this->dispatchPostModerationNotification($request->user(), $post, $moderationStatus, $moderationReason);
+        }
 
         Log::info('Пост создан успешно', [
             'post_id' => $post->id, 
@@ -415,9 +425,9 @@ public function update(Request $request, Post $post)
     }
 
     $data = $request->validate([
-        'title' => 'sometimes|string|max:255',
-        'description' => 'sometimes|string',
-        'tags' => 'sometimes|string',
+        'title' => 'sometimes|string|max:'.(int) config('field_limits.post.title.max', 255),
+        'description' => 'sometimes|string|max:'.(int) config('field_limits.post.description.max', 50000),
+        'tags' => $this->tagsValidationRules(sometimes: true),
         'category_id' => 'sometimes|exists:categories,id',
         'is_draft' => 'sometimes|boolean',
         'published_at' => 'nullable|date',
@@ -515,6 +525,16 @@ public function update(Request $request, Post $post)
 
         $post->update($updatePayload);
 
+        if ($isResubmission && $autoModeration) {
+            $reason = $autoModeration['passed'] ? null : ($autoModeration['reason'] ?? 'Нарушение правил сообщества.');
+            $this->dispatchPostModerationNotification(
+                $request->user(),
+                $post->fresh(),
+                $nextModerationStatus,
+                $reason
+            );
+        }
+
         return response()->json([
             'message' => $isResubmission && $autoModeration && !$autoModeration['passed']
                 ? 'Публикация отклонена автомодерацией. Исправьте текст и отправьте снова.'
@@ -600,5 +620,63 @@ public function update(Request $request, Post $post)
             ]);
             return response()->json(['message' => 'Не удалось удалить публикацию'], 500);
         }
+    }
+
+    private function dispatchPostModerationNotification(
+        User $author,
+        Post $post,
+        string $moderationStatus,
+        ?string $reason = null
+    ): void {
+        $title = $post->post_title ?: 'Без названия';
+        $replacements = [
+            'title' => $title,
+            'post_id' => (string) $post->id,
+            'user_id' => (string) $author->id,
+            'reason' => $reason ?? '',
+        ];
+        $meta = ['post_id' => $post->id];
+
+        if ($moderationStatus === 'pending') {
+            $this->userNotifications->notify(
+                $author,
+                UserNotificationType::PostPendingModeration,
+                $replacements,
+                new PostPendingModerationNotification($post),
+                $meta
+            );
+
+            return;
+        }
+
+        if ($moderationStatus === 'rejected') {
+            $this->userNotifications->notify(
+                $author,
+                UserNotificationType::PostRejected,
+                $replacements,
+                new PostRemovedByAdminNotification($post, 'rejected', $reason),
+                $meta
+            );
+        }
+    }
+
+    /**
+     * @return list<string|\Closure>
+     */
+    private function tagsValidationRules(bool $sometimes = false): array
+    {
+        return [
+            $sometimes ? 'sometimes' : 'nullable',
+            'string',
+            'max:'.(int) config('post_tags.max_input_length', 500),
+            function (string $attribute, mixed $value, \Closure $fail): void {
+                try {
+                    PostTags::normalizeAndValidate(is_string($value) ? $value : '');
+                } catch (ValidationException $e) {
+                    $messages = $e->errors();
+                    $fail($messages['tags'][0] ?? 'Некорректные теги.');
+                }
+            },
+        ];
     }
 }

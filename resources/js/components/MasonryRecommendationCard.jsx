@@ -22,6 +22,8 @@ function MasonryRecommendationCard({ post, linkState }) {
             mediaType={mediaType}
             alt={title}
             className="masonry-card__image"
+            interactionMode="card"
+            controls={false}
             onMediaLoad={scheduleRelayout}
           />
         </Link>

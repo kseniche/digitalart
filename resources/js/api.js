@@ -7,8 +7,13 @@
 const CSRF_COOKIE_NAME = 'XSRF-TOKEN';
 const AUTH_TOKEN_KEY = 'auth_token';
 
-/** @type {((res: Response | null, err?: Error) => void) | null} */
+/** @type {((res: Response | null, err?: Error, data?: object | null) => void) | null} */
 let apiErrorNotifier = null;
+
+/**
+ * Опции apiFetch: skipErrorNotify — не вызывать глобальный toast (ошибку показывает вызывающий код).
+ * @typedef {RequestInit & { skipErrorNotify?: boolean }} ApiFetchOptions
+ */
 
 /**
  * Регистрирует глобальный обработчик ошибок API (вызывается из ToastProvider).
@@ -71,7 +76,8 @@ export function setAuthToken(token) {
  * @returns {Promise<Response>}
  */
 export function apiFetch(url, options = {}) {
-  const opts = { ...options };
+  const { skipErrorNotify = false, ...fetchOptions } = options;
+  const opts = { ...fetchOptions };
   opts.credentials = 'include';
   opts.headers = new Headers(opts.headers || {});
 
@@ -109,7 +115,7 @@ export function apiFetch(url, options = {}) {
 
   return fetch(url, opts)
     .then((res) => {
-      if (!res.ok && apiErrorNotifier) {
+      if (!res.ok && apiErrorNotifier && !skipErrorNotify) {
         const notifier = apiErrorNotifier;
         res.clone().json().then((data) => {
           notifier(res, null, data);
@@ -120,9 +126,14 @@ export function apiFetch(url, options = {}) {
       return res;
     })
     .catch((err) => {
-      if (apiErrorNotifier) {
+      if (apiErrorNotifier && !skipErrorNotify) {
         apiErrorNotifier(null, err);
       }
       throw err;
     });
+}
+
+/** Удобная обёртка для запросов с локальной обработкой ошибок (без второго toast). */
+export function apiFetchLocal(url, options = {}) {
+  return apiFetch(url, { ...options, skipErrorNotify: true });
 }

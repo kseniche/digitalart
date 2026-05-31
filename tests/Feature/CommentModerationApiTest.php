@@ -189,10 +189,81 @@ class CommentModerationApiTest extends TestCase
         $response->assertStatus(200)
             ->assertJsonStructure([
                 'pending_review',
+                'expiring_soon',
                 'reports',
                 'hidden',
                 'total',
                 'deleted_last_30_days',
+                'pending_permanent_delete',
             ]);
+    }
+
+    public function test_admin_soft_deletes_comment_and_can_restore_within_grace(): void
+    {
+        $admin = User::factory()->create();
+        $admin->assignRole('admin');
+        $token = $admin->createToken('test')->plainTextToken;
+
+        $author = User::factory()->create();
+        $post = Post::factory()->create([
+            'user_id' => $author->id,
+            'moderation_status' => 'approved',
+            'is_draft' => false,
+            'published_at' => now()->subMinute(),
+            'comment_count' => 1,
+        ]);
+        $comment = $this->approvedComment($post, $author);
+
+        $delete = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->deleteJson("/api/admin/comments/{$comment->id}");
+
+        $delete->assertStatus(200);
+        $this->assertSoftDeleted('comments', ['id' => $comment->id]);
+        $post->refresh();
+        $this->assertSame(0, (int) $post->comment_count);
+
+        $restore = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson("/api/admin/comments/{$comment->id}/restore");
+
+        $restore->assertStatus(200);
+        $comment->refresh();
+        $this->assertNull($comment->deleted_at);
+        $post->refresh();
+        $this->assertSame(1, (int) $post->comment_count);
+    }
+
+    public function test_admin_comments_sort_asc(): void
+    {
+        $admin = User::factory()->create();
+        $admin->assignRole('admin');
+        $token = $admin->createToken('test')->plainTextToken;
+
+        $author = User::factory()->create();
+        $post = Post::factory()->create(['user_id' => $author->id]);
+
+        $older = $this->approvedComment($post, $author);
+        $older->update(['created_at' => now()->subDays(2)]);
+        $newer = $this->approvedComment($post, $author);
+        $newer->update(['admin_reviewed_at' => now()]);
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->getJson('/api/admin/comments?tab=all&status=deleted&sort_dir=asc');
+
+        $response->assertStatus(200);
+    }
+
+    public function test_content_purge_removes_old_trashed_comment(): void
+    {
+        config()->set('content_retention.grace_days', 7);
+
+        $author = User::factory()->create();
+        $post = Post::factory()->create(['user_id' => $author->id, 'comment_count' => 0]);
+        $comment = $this->approvedComment($post, $author);
+        $comment->delete();
+        $comment->update(['deleted_at' => now()->subDays(8)]);
+
+        $this->artisan('content:purge-trashed')->assertSuccessful();
+
+        $this->assertDatabaseMissing('comments', ['id' => $comment->id]);
     }
 }

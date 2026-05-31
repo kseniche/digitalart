@@ -15,6 +15,9 @@ use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminCommentController;
 use App\Http\Controllers\Api\CommentReportController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CountryController;
+use App\Http\Controllers\Api\UserNotificationController;
+use App\Http\Controllers\Api\MarkdownPreviewController;
 
 // ПУБЛИЧНЫЕ МАРШРУТЫ (доступны без аутентификации)
 
@@ -23,6 +26,7 @@ Route::get('/feed', [FeedController::class, 'index'])->middleware('optional_sanc
 Route::get('/posts', [FeedController::class, 'index'])->middleware('optional_sanctum'); // дублирует /feed для совместимости
 Route::get('/tags', [FeedController::class, 'tags']);
 Route::get('/categories', [CategoryController::class, 'index']);
+Route::get('/countries', [CountryController::class, 'index']);
 Route::get('/posts/{id}', [PostController::class, 'show'])->middleware('optional_sanctum');
 Route::get('/recommendations', [RecommendationsController::class, 'index'])->middleware('optional_sanctum');
 Route::get('/profiles/{user}', [ProfileController::class, 'show'])->middleware('optional_sanctum');
@@ -49,6 +53,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/user/update-password', [AuthController::class, 'updatePassword'])->middleware('not_banned');
     Route::post('/user/accept-comment-rules', [AuthController::class, 'acceptCommentRules'])->middleware('not_banned');
+
+    Route::post('/markdown/preview', [MarkdownPreviewController::class, 'preview'])
+        ->middleware(['not_banned', 'throttle:30,1']);
+
+    // Внутренние уведомления
+    Route::get('/notifications/unread-count', [UserNotificationController::class, 'unreadCount']);
+    Route::post('/notifications/read-all', [UserNotificationController::class, 'markAllRead']);
+    Route::delete('/notifications', [UserNotificationController::class, 'destroyAll']);
+    Route::get('/notifications', [UserNotificationController::class, 'index']);
+    Route::post('/notifications/{id}/read', [UserNotificationController::class, 'markRead']);
+    Route::delete('/notifications/{id}', [UserNotificationController::class, 'destroy']);
 
     // Публикации (создание — только для незаблокированных, критерий 3.6)
     Route::post('/posts', [PostController::class, 'store'])->middleware(['not_banned', 'throttle:content-create']);
@@ -97,6 +112,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/users/{id}/restore', [AdminController::class, 'restoreUser']);
         Route::post('/users/{id}/ban', [AdminController::class, 'banUser']);
         Route::post('/users/{id}/unban', [AdminController::class, 'unbanUser']);
+        Route::post('/users/{id}/role', [AdminController::class, 'updateUserRole']);
         
         // Управление публикациями
         Route::get('/posts/stats', [AdminController::class, 'postsStats']);
@@ -115,6 +131,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/comments/{id}/dismiss-reports', [AdminCommentController::class, 'dismissReports']);
         Route::post('/comments/{id}/delete-with-banned-words', [AdminCommentController::class, 'destroyWithBannedWords']);
         Route::post('/comments/{id}/approve', [AdminCommentController::class, 'approve']);
+        Route::post('/comments/{id}/restore', [AdminCommentController::class, 'restore']);
         Route::delete('/comments/{comment}', [AdminCommentController::class, 'destroy']);
 
         // Управление словарем автомодерации

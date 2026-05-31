@@ -13,7 +13,7 @@ return new class extends Migration
             $table->string('post_title', 255);
             $table->text('post_content')->nullable();
             $table->string('media_path', 500)->nullable();
-            $table->string('tags', 255)->nullable();
+            $table->json('tags')->nullable();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('category_id')->nullable()->constrained('categories')->restrictOnDelete();
             $table->enum('media_type', ['image', 'video'])->default('image');

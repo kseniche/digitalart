@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import ConfirmModal from '../modals/ConfirmModal';
 import EmptyState from '../common/EmptyState';
@@ -36,12 +36,10 @@ function AdminCategories() {
       } else {
         const msg = 'Не удалось загрузить категории';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -83,11 +81,9 @@ function AdminCategories() {
         } else {
           setCreateErrors({ name: data.message || 'Не удалось создать категорию' });
         }
-        toast.error(data.message || 'Ошибка создания категории');
       }
     } catch (err) {
       setCreateErrors({ name: 'Ошибка соединения с сервером' });
-      toast.error('Ошибка соединения с сервером');
     } finally {
       setCreateLoading(false);
     }

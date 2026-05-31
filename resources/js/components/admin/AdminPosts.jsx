@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '../../api';
+import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import PostCard from './PostCard';
 import ConfirmModal from '../modals/ConfirmModal';
@@ -7,6 +7,8 @@ import EmptyState from '../common/EmptyState';
 import Alert from '../common/Alert';
 import MediaPreview from '../common/MediaPreview';
 import AdminModerationStats from './AdminModerationStats';
+import FeedTagLink from '../common/FeedTagLink';
+import FeedCategoryLink from '../common/FeedCategoryLink';
 
 function AdminPosts() {
   const toast = useToast().toast;
@@ -99,14 +101,33 @@ function AdminPosts() {
       } else {
         const msg = 'Не удалось загрузить список публикаций. Попробуйте позже.';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const restorePost = async (postId) => {
+    try {
+      const response = await apiFetch(`/api/admin/posts/${postId}/restore`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        const msg = data?.message || 'Публикация восстановлена';
+        setSuccessMessage(msg);
+        toast.success(msg);
+        refreshPosts();
+        if (selectedPostDetail?.post?.id === postId) {
+          fetchPostDetail(postId);
+        }
+      } else {
+        const data = await response.json().catch(() => ({}));
+        toast.error(data?.message || 'Не удалось восстановить публикацию');
+      }
+    } catch {
+      toast.error('Ошибка соединения с сервером');
     }
   };
 
@@ -119,6 +140,8 @@ function AdminPosts() {
       setConfirmReject({ open: true, postId });
     } else if (action === 'approve') {
       approvePost(postId);
+    } else if (action === 'restore') {
+      restorePost(postId);
     }
   };
 
@@ -149,12 +172,10 @@ function AdminPosts() {
       } else {
         const msg = 'Не удалось загрузить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     } finally {
       setPostDetailLoading(false);
     }
@@ -182,12 +203,10 @@ function AdminPosts() {
       } else {
         const msg = 'Не удалось удалить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -213,12 +232,10 @@ function AdminPosts() {
       } else {
         const msg = 'Не удалось отклонить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -242,12 +259,27 @@ function AdminPosts() {
       } else {
         const msg = 'Не удалось одобрить публикацию';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
+    }
+  };
+
+  const restoreComment = async (commentId) => {
+    try {
+      const response = await apiFetch(`/api/admin/comments/${commentId}/restore`, { method: 'POST' });
+      if (response.ok) {
+        toast.success('Комментарий восстановлен');
+        if (selectedPostDetail?.post?.id) {
+          fetchPostDetail(selectedPostDetail.post.id);
+        }
+      } else {
+        const data = await response.json().catch(() => ({}));
+        toast.error(data?.message || 'Не удалось восстановить комментарий');
+      }
+    } catch {
+      toast.error('Ошибка соединения с сервером');
     }
   };
 
@@ -270,12 +302,10 @@ function AdminPosts() {
       } else {
         const msg = 'Не удалось удалить комментарий';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -298,12 +328,10 @@ function AdminPosts() {
       } else {
         const msg = 'Не удалось одобрить комментарий';
         setError(msg);
-        toast.error(msg);
       }
     } catch (err) {
       const msg = 'Ошибка соединения с сервером';
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -317,7 +345,7 @@ function AdminPosts() {
         <ConfirmModal
           open={confirmDelete.open}
           title="Удаление публикации за нарушение"
-          message="Пост будет удален из-за нарушения правил сообщества, пользователь не сможет его исправить. Продолжить?"
+          message="Публикация будет скрыта на 7 дней. В этот период её можно восстановить. Продолжить?"
           confirmText="Удалить за нарушение"
           cancelText="Отмена"
           variant="danger"
@@ -402,22 +430,38 @@ function AdminPosts() {
                 </p>
                 <div className="admin-tags-row">
                   {tags.map((tag, idx) => (
-                    <span key={idx} className="admin-tag">#{String(tag).trim()}</span>
+                    <FeedTagLink key={idx} tag={String(tag).trim()} className="admin-tag" />
                   ))}
-                  {post?.category?.name && <span className="admin-tag">Категория: {post.category.name}</span>}
+                  {post?.category?.name && (
+                    <FeedCategoryLink
+                      categoryId={post.category_id}
+                      categoryName={post.category.name}
+                      className="admin-tag"
+                      prefix="Категория: "
+                    />
+                  )}
                 </div>
                 <div className="user-card__actions admin-detail-actions">
-                  {isPendingPost && (
+                  {isPendingPost && !post?.deleted_at && (
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => handlePostAction('approve', post.id)}>
                       Одобрить
                     </button>
                   )}
-                  <button type="button" className="btn btn-outline btn-sm" onClick={() => handlePostAction('reject', post.id)}>
-                    Отклонить
-                  </button>
-                  <button type="button" className="btn btn-danger btn-sm" onClick={() => handlePostAction('delete', post.id)}>
-                    Удалить за нарушение
-                  </button>
+                  {!post?.deleted_at && (
+                    <>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={() => handlePostAction('reject', post.id)}>
+                        Отклонить
+                      </button>
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => handlePostAction('delete', post.id)}>
+                        Удалить за нарушение
+                      </button>
+                    </>
+                  )}
+                  {post?.deleted_at && post?.can_restore && (
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => handlePostAction('restore', post.id)}>
+                      Восстановить публикацию
+                    </button>
+                  )}
                 </div>
                 <div className="admin-comments-shell">
                   <div className="admin-comments-title">
@@ -440,7 +484,12 @@ function AdminPosts() {
                               {!isDeletedComment && comment.moderation_status !== 'approved' && (
                                 <button type="button" className="btn btn-primary btn-sm" onClick={() => handleCommentAction('approve', comment.id)}>Одобрить</button>
                               )}
-                              <button type="button" className="btn btn-danger btn-sm" onClick={() => handleCommentAction('delete', comment.id)}>Удалить</button>
+                              {isDeletedComment && comment.can_restore && (
+                                <button type="button" className="btn btn-primary btn-sm" onClick={() => restoreComment(comment.id)}>Восстановить</button>
+                              )}
+                              {!isDeletedComment && (
+                                <button type="button" className="btn btn-danger btn-sm" onClick={() => handleCommentAction('delete', comment.id)}>Удалить</button>
+                              )}
                             </div>
                           </div>
                           <p className="admin-comment-text">
@@ -466,7 +515,7 @@ function AdminPosts() {
       <ConfirmModal
         open={confirmDelete.open}
         title="Удаление публикации за нарушение"
-        message="Пост будет удален из-за нарушения правил сообщества, пользователь не сможет его исправить. Продолжить?"
+        message="Публикация будет скрыта на 7 дней. В этот период её можно восстановить. Продолжить?"
         confirmText="Удалить за нарушение"
         cancelText="Отмена"
         variant="danger"

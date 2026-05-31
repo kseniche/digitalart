@@ -2,6 +2,11 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import Alert from '../common/Alert';
+import CharCounter from '../common/CharCounter';
+import { FIELD_LIMITS } from '../../constants/fieldLimits';
+import { validateMaxLength } from '../../utils/fieldValidation';
+
+const AUTH_LIMITS = FIELD_LIMITS.auth;
 
 /** Согласовано с App\Rules\PersonNameLetters: буквы; между частями — пробел, дефис или апостроф (' U+0027, ’ U+2019). */
 const PERSON_NAME_LETTERS_RE = /^[\p{L}]+(?:[ \u0027\u2019\-][\p{L}]+)*$/u;
@@ -81,6 +86,15 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
       newErrors.accept_terms = 'Необходимо принять пользовательское соглашение и правила сообщества';
     }
 
+    const firstMax = validateMaxLength(formData.firstName, AUTH_LIMITS.firstName.max, 'Имя');
+    if (firstMax) newErrors.firstName = firstMax;
+    const lastMax = validateMaxLength(formData.lastName, AUTH_LIMITS.lastName.max, 'Фамилия');
+    if (lastMax) newErrors.lastName = lastMax;
+    const userMax = validateMaxLength(formData.username, AUTH_LIMITS.username.max, 'Логин');
+    if (userMax) newErrors.username = userMax;
+    const emailMax = validateMaxLength(formData.email, AUTH_LIMITS.email.max, 'Электронная почта');
+    if (emailMax) newErrors.email = emailMax;
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -156,7 +170,9 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
                 onChange={handleChange}
                 className="form-input"
                 placeholder="Имя"
+                maxLength={AUTH_LIMITS.firstName.max}
               />
+              <CharCounter value={formData.firstName} max={AUTH_LIMITS.firstName.max} min={AUTH_LIMITS.firstName.min} required />
               {errors.firstName && <div className="form-error">{errors.firstName}</div>}
             </div>
 
@@ -172,7 +188,9 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
                 onChange={handleChange}
                 className="form-input"
                 placeholder="Фамилия"
+                maxLength={AUTH_LIMITS.lastName.max}
               />
+              <CharCounter value={formData.lastName} max={AUTH_LIMITS.lastName.max} min={AUTH_LIMITS.lastName.min} required />
               {errors.lastName && <div className="form-error">{errors.lastName}</div>}
             </div>
           </div>
@@ -189,7 +207,9 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
               onChange={handleChange}
               className="form-input"
               placeholder="Уникальный логин"
+              maxLength={AUTH_LIMITS.username.max}
             />
+            <CharCounter value={formData.username} max={AUTH_LIMITS.username.max} min={AUTH_LIMITS.username.min} required />
             {errors.username && <div className="form-error">{errors.username}</div>}
           </div>
 
@@ -205,7 +225,9 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
               onChange={handleChange}
               className="form-input"
               placeholder="Введите электронную почту"
+              maxLength={AUTH_LIMITS.email.max}
             />
+            <CharCounter value={formData.email} max={AUTH_LIMITS.email.max} required={false} />
             {errors.email && <div className="form-error">{errors.email}</div>}
           </div>
 
@@ -221,7 +243,9 @@ function RegisterModal({ onClose, onRegister, onSwitchToLogin }) {
               onChange={handleChange}
               className="form-input"
               placeholder="Минимум 8 символов"
+              maxLength={AUTH_LIMITS.password.max}
             />
+            <CharCounter value={formData.password} max={AUTH_LIMITS.password.max} min={AUTH_LIMITS.password.min} required hint="Минимум 8 символов" />
             {errors.password && <div className="form-error">{errors.password}</div>}
           </div>
 

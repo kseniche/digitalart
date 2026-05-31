@@ -8,6 +8,7 @@ function CommentCard({
   onDeleteWithWords,
   onUnhide,
   onDismissReports,
+  onRestore,
   onOpenPost,
 }) {
   const [banWords, setBanWords] = useState('');
@@ -26,6 +27,7 @@ function CommentCard({
 
   const isDeleted = comment.deleted_at != null;
   const reportsCount = comment.reports_count || 0;
+  const canRestore = isDeleted && comment.can_restore;
 
   return (
     <div className={`admin-comment-card ${isDeleted ? 'admin-comment-card--deleted' : ''}`}>
@@ -53,17 +55,42 @@ function CommentCard({
           {comment.is_admin_reviewed && (
             <span className="admin-status-badge admin-status-badge--approved">Проверен</span>
           )}
+          {comment.is_expiring_soon && !isDeleted && (
+            <span className="admin-status-badge admin-status-badge--pending" title={`Авто-проверка: ${formatDate(comment.auto_review_at)}`}>
+              Истекает срок очереди
+            </span>
+          )}
+          {comment.is_queue_overdue && !isDeleted && (
+            <span className="admin-status-badge admin-status-badge--rejected">Просрочена очередь</span>
+          )}
           {reportsCount > 0 && (
             <span className="admin-status-badge admin-status-badge--rejected">
               Жалоб: {reportsCount}
             </span>
           )}
           {isDeleted && <span className="deleted-badge">Удалён</span>}
+          {comment.is_pending_permanent_delete && (
+            <span className="admin-status-badge admin-status-badge--pending" title={comment.purge_at ? `Окончательное удаление: ${formatDate(comment.purge_at)}` : ''}>
+              Ожидает окончательного удаления ({comment.days_until_purge ?? 0} дн.)
+            </span>
+          )}
         </div>
       </div>
 
       <div className="admin-comment-card__content">
         <p className="admin-comment-text">{comment.comment_content}</p>
+        {!isDeleted && comment.queue_age_days != null && (
+          <p className="ui-form-help" style={{ marginTop: '0.5rem' }}>
+            В очереди: {comment.queue_age_days} дн.
+            {comment.auto_review_at && ` · авто-проверка: ${formatDate(comment.auto_review_at)}`}
+          </p>
+        )}
+        {isDeleted && comment.deleted_at && (
+          <p className="ui-form-help" style={{ marginTop: '0.5rem' }}>
+            Удалён: {formatDate(comment.deleted_at)}
+            {comment.purge_at && ` · окончательное удаление: ${formatDate(comment.purge_at)}`}
+          </p>
+        )}
       </div>
 
       {(comment.post_id || comment.post?.id) && (
@@ -99,6 +126,18 @@ function CommentCard({
         </div>
       )}
 
+      {canRestore && (
+        <div className="admin-comment-card__actions" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+          <button
+            type="button"
+            className="admin-btn admin-btn-primary admin-btn-sm"
+            onClick={() => onRestore?.(comment.id)}
+          >
+            Восстановить комментарий
+          </button>
+        </div>
+      )}
+
       {!isDeleted && (
         <div className="admin-comment-card__actions" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
           {tab === 'recent' && !comment.is_admin_reviewed && (
@@ -107,7 +146,7 @@ function CommentCard({
               className="admin-btn admin-btn-success admin-btn-sm"
               onClick={() => onConfirm?.(comment.id)}
             >
-              ✅ Подтвердить
+              Подтвердить
             </button>
           )}
           {reportsCount > 0 && (
@@ -133,7 +172,7 @@ function CommentCard({
             className="admin-btn admin-btn-danger admin-btn-sm"
             onClick={() => onDelete?.(comment.id)}
           >
-            🗑 Удалить
+            Удалить
           </button>
           <button
             type="button"

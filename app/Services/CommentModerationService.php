@@ -78,7 +78,22 @@ class CommentModerationService
     }
 
     /**
-     * Окончательное удаление комментария (без восстановления).
+     * Удаление комментария администратором (soft delete, восстановление в течение grace_days).
+     */
+    public function softDeleteByAdmin(Comment $comment): void
+    {
+        if ($comment->trashed()) {
+            return;
+        }
+
+        DB::transaction(function () use ($comment) {
+            $this->decrementPostCountIfVisible($comment);
+            $comment->delete();
+        });
+    }
+
+    /**
+     * Окончательное удаление комментария (cron purge или ручная очистка).
      */
     public function forceDeleteComment(Comment $comment): void
     {

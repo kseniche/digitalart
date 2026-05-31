@@ -20,6 +20,8 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
               mediaType={post.mediaType}
               alt={post.title}
               className="masonry-card__image"
+              interactionMode="card"
+              controls={false}
               onMediaLoad={scheduleRelayout}
             />
           </Link>
@@ -36,6 +38,8 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
               mediaType={post.mediaType}
               alt={post.title}
               className="masonry-card__image"
+              interactionMode="card"
+              controls={false}
               onMediaLoad={scheduleRelayout}
             />
           </div>
@@ -59,7 +63,7 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
             <Link to={`/profile/${post.author.id}`} state={profileLinkState} style={{ textDecoration: 'none', color: 'inherit' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <img
-                  src={post.author.avatar}
+                  src={post.author.avatar_url || post.author.avatar || '/default-avatar.svg'}
                   alt={post.author.name}
                   className="author-avatar"
                   onError={(e) => {

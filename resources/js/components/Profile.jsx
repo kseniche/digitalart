@@ -3,13 +3,51 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useGoBack } from '../hooks/useGoBack';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { apiFetch } from '../api';
+import { apiFetchLocal as apiFetch } from '../api';
 import EmptyState from './common/EmptyState';
 import Alert from './common/Alert';
 import MediaPreview from './common/MediaPreview';
 import MasonryGrid from './common/MasonryGrid';
 import ProfilePostCard from './ProfilePostCard';
 import '../../css/app.css';
+
+function formatProfilePost(post) {
+  return {
+    id: post.id,
+    title: post.post_title,
+    description: post.post_content || '',
+    tags: post.tags || '',
+    image: post.image_url || post.media_path || '/images/digital-art-1.jpg',
+    mediaType: post.media_type || 'image',
+    likes: post.like_count || 0,
+    comments: post.comment_count || 0,
+    post_title: post.post_title,
+    post_content: post.post_content,
+    media_path: post.media_path,
+    categoryId: post.category_id ?? null,
+    categoryName:
+      typeof post.category === 'string' ? post.category : (post.category?.name ?? null),
+    moderation_status: post.moderation_status,
+    moderation_rejection_reason: post.moderation_rejection_reason || '',
+    author: post.author
+      ? {
+          id: post.author.id,
+          name: `${post.author.name || ''} ${post.author.user_surname || ''}`.trim() || 'Автор',
+          avatar:
+            post.author.avatar_url
+            || post.author.avatar
+            || '/default-avatar.svg',
+        }
+      : null,
+  };
+}
+
+const OWN_PROFILE_TABS = [
+  { id: 'portfolio', labelFull: 'Моё портфолио', labelShort: 'Портфолио' },
+  { id: 'favorites', labelFull: 'Избранное', labelShort: 'Избранное' },
+  { id: 'drafts', labelFull: 'Черновики', labelShort: 'Черновики' },
+  { id: 'moderation', labelFull: 'На рассмотрении', labelShort: 'Модерация' },
+];
 
 function Profile() {
   const { id } = useParams();
@@ -90,19 +128,7 @@ function Profile() {
           if (postsResponse.ok) {
             const postsData = await postsResponse.json();
             
-            const formattedPosts = postsData.data.map(post => ({
-              id: post.id,
-              title: post.post_title,
-              description: post.post_content || '',
-              tags: post.tags || '',
-              image: post.image_url || post.media_path || '/images/digital-art-1.jpg',
-              mediaType: post.media_type || 'image',
-              likes: post.like_count || 0,
-              comments: post.comment_count || 0,
-              post_title: post.post_title,
-              post_content: post.post_content,
-              media_path: post.media_path
-            }));
+            const formattedPosts = postsData.data.map(formatProfilePost);
             
             setPosts(formattedPosts);
           } else {
@@ -133,19 +159,7 @@ function Profile() {
         });
         if (res.ok) {
           const data = await res.json();
-          const items = (data.data || []).map(post => ({
-            id: post.id,
-            title: post.post_title,
-            description: post.post_content || '',
-            tags: post.tags || '',
-            image: post.image_url || post.media_path || '/images/digital-art-1.jpg',
-            mediaType: post.media_type || 'image',
-            likes: post.like_count || 0,
-            comments: post.comment_count || 0,
-            post_title: post.post_title,
-            post_content: post.post_content,
-            media_path: post.media_path
-          }));
+          const items = (data.data || []).map(formatProfilePost);
           setFavorites(items);
           setFavoritesLastPage(data.last_page || 1);
         } else {
@@ -170,19 +184,7 @@ function Profile() {
         });
         if (res.ok) {
           const data = await res.json();
-          const items = (data.data || []).map(post => ({
-            id: post.id,
-            title: post.post_title,
-            description: post.post_content || '',
-            tags: post.tags || '',
-            image: post.image_url || post.media_path || '/images/digital-art-1.jpg',
-            mediaType: post.media_type || 'image',
-            likes: post.like_count || 0,
-            comments: post.comment_count || 0,
-            post_title: post.post_title,
-            post_content: post.post_content,
-            media_path: post.media_path
-          }));
+          const items = (data.data || []).map(formatProfilePost);
           setDrafts(items);
           setDraftsLastPage(data.last_page || 1);
         } else setDrafts([]);
@@ -205,21 +207,7 @@ function Profile() {
         });
         if (res.ok) {
           const data = await res.json();
-          const items = (data.data || []).map(post => ({
-            id: post.id,
-            title: post.post_title,
-            description: post.post_content || '',
-            tags: post.tags || '',
-            image: post.image_url || post.media_path || '/images/digital-art-1.jpg',
-            mediaType: post.media_type || 'image',
-            likes: post.like_count || 0,
-            comments: post.comment_count || 0,
-            post_title: post.post_title,
-            post_content: post.post_content,
-            media_path: post.media_path,
-            moderation_status: post.moderation_status,
-            moderation_rejection_reason: post.moderation_rejection_reason || '',
-          }));
+          const items = (data.data || []).map(formatProfilePost);
           setModerationPosts(items);
           setModerationLastPage(data.last_page || 1);
         } else setModerationPosts([]);
@@ -305,9 +293,7 @@ function Profile() {
 
   const handleFollow = async () => {
     if (!isAuthenticated) {
-      const msg = 'Для подписки необходимо войти в систему';
-      setError(msg);
-      toast.error(msg);
+      setError('Для подписки необходимо войти в систему');
       return;
     }
     if (!profile) return;
@@ -325,14 +311,10 @@ function Profile() {
         setProfile(prev => prev ? { ...prev, followers: Math.max(0, prev.followers + (following ? 1 : -1)) } : prev);
         setError('');
       } else {
-        const msg = 'Не удалось изменить подписку. Попробуйте позже.';
-        setError(msg);
-        toast.error(msg);
+        setError('Не удалось изменить подписку. Попробуйте позже.');
       }
-    } catch (e) {
-      const msg = 'Ошибка соединения с сервером';
-      setError(msg);
-      toast.error(msg);
+    } catch {
+      setError('Ошибка соединения с сервером');
     }
   };
 
@@ -363,7 +345,7 @@ function Profile() {
   }
 
   return (
-    <div className="main-content">
+    <div className="main-content profile-page">
       <div style={{ marginBottom: '1.5rem' }}>
         <button type="button" onClick={goBack} className="ui-page-back" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
           ← Назад
@@ -373,10 +355,10 @@ function Profile() {
       {/* Сообщение об ошибке */}
       <Alert type="error" message={error} onClose={() => setError('')} />
 
-      <div className="profile-grid" style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '2rem' }}>
+      <div className="profile-grid">
         {/* Левая панель - информация о пользователе */}
-        <div>
-          <div className="ui-panel" style={{ textAlign: 'center' }}>
+        <div className="profile-sidebar">
+          <div className="ui-panel profile-sidebar-panel">
             <img
               src={profile.avatar}
               alt={profile.name}
@@ -502,10 +484,11 @@ function Profile() {
               </button>
             </div>
             
-            {!isOwnProfile && (
+            {!isOwnProfile && isAuthenticated && (
               <button
+                type="button"
                 onClick={handleFollow}
-                className={isFollowing ? 'btn btn-outline' : 'btn btn-primary'}
+                className={`profile-follow-inline ${isFollowing ? 'btn btn-outline' : 'btn btn-primary'}`}
                 style={{ width: '100%' }}
               >
                 {isFollowing ? 'Отписаться' : 'Подписаться'}
@@ -515,50 +498,36 @@ function Profile() {
         </div>
 
         {/* Правая панель - портфолио / избранное */}
-        <div>
+        <div className="profile-main-col">
           <div className="profile-topbar">
             {isOwnProfile ? (
-              <>
-                <div className="profile-tabs">
+              <div className="profile-action-grid" role="tablist" aria-label="Разделы профиля">
+                {OWN_PROFILE_TABS.map((tab) => (
                   <button
+                    key={tab.id}
                     type="button"
-                    onClick={() => setProfileTab('portfolio')}
-                    className={profileTab === 'portfolio' ? 'btn btn-primary' : 'btn btn-outline'}
-                    style={{ fontFamily: 'JetBrains Mono, monospace' }}
+                    role="tab"
+                    aria-selected={profileTab === tab.id}
+                    onClick={() => {
+                      setProfileTab(tab.id);
+                      if (tab.id === 'favorites') setFavoritesPage(1);
+                      if (tab.id === 'drafts') setDraftsPage(1);
+                      if (tab.id === 'moderation') {
+                        setModerationPage(1);
+                        setModerationFilter('pending');
+                      }
+                    }}
+                    className={`profile-action-grid__item profile-tab-btn ${profileTab === tab.id ? 'btn btn-primary' : 'btn btn-outline'}`}
                   >
-                    Моё портфолио
+                    <span className="profile-tab-label profile-tab-label--full">{tab.labelFull}</span>
+                    <span className="profile-tab-label profile-tab-label--short">{tab.labelShort}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => { setProfileTab('favorites'); setFavoritesPage(1); }}
-                    className={profileTab === 'favorites' ? 'btn btn-primary' : 'btn btn-outline'}
-                    style={{ fontFamily: 'JetBrains Mono, monospace' }}
-                  >
-                    Избранное
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setProfileTab('drafts'); setDraftsPage(1); }}
-                    className={profileTab === 'drafts' ? 'btn btn-primary' : 'btn btn-outline'}
-                    style={{ fontFamily: 'JetBrains Mono, monospace' }}
-                  >
-                    Черновики
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setProfileTab('moderation'); setModerationPage(1); setModerationFilter('pending'); }}
-                    className={profileTab === 'moderation' ? 'btn btn-primary' : 'btn btn-outline'}
-                    style={{ fontFamily: 'JetBrains Mono, monospace' }}
-                  >
-                    На рассмотрении
-                  </button>
-                </div>
-                {profileTab === 'portfolio' && (
-                  <Link to="/create" className="btn btn-primary">
-                    + Добавить работу
-                  </Link>
-                )}
-              </>
+                ))}
+                <Link to="/create" className="profile-action-grid__item profile-action-grid__create btn btn-primary">
+                  <span className="profile-tab-label profile-tab-label--full">+ Добавить работу</span>
+                  <span className="profile-tab-label profile-tab-label--short">+ Работа</span>
+                </Link>
+              </div>
             ) : (
               <h2 className="ui-section-title" style={{ marginBottom: 0 }}>Портфолио</h2>
             )}
@@ -568,22 +537,24 @@ function Profile() {
             <div className="ui-form-help" style={{ padding: '1rem 0' }}>{renderProfileSkeleton()}</div>
           ) : null}
           {profileTab === 'moderation' && (
-            <div className="profile-tabs" style={{ marginBottom: '1rem' }}>
+            <div className="profile-moderation-filters ui-segmented-control" role="group" aria-label="Фильтр модерации">
               <button
                 type="button"
-                className={moderationFilter === 'pending' ? 'btn btn-primary' : 'btn btn-outline'}
+                className={`ui-segmented-control__btn${moderationFilter === 'pending' ? ' ui-segmented-control__btn--active' : ''}`}
                 onClick={() => { setModerationFilter('pending'); setModerationPage(1); }}
-                style={{ fontFamily: 'JetBrains Mono, monospace' }}
+                aria-pressed={moderationFilter === 'pending'}
               >
-                Ожидают рассмотрения
+                <span className="profile-tab-label profile-tab-label--full">Ожидают рассмотрения</span>
+                <span className="profile-tab-label profile-tab-label--short">Ожидают</span>
               </button>
               <button
                 type="button"
-                className={moderationFilter === 'rejected' ? 'btn btn-primary' : 'btn btn-outline'}
+                className={`ui-segmented-control__btn${moderationFilter === 'rejected' ? ' ui-segmented-control__btn--active' : ''}`}
                 onClick={() => { setModerationFilter('rejected'); setModerationPage(1); }}
-                style={{ fontFamily: 'JetBrains Mono, monospace' }}
+                aria-pressed={moderationFilter === 'rejected'}
               >
-                Отклоненные
+                <span className="profile-tab-label profile-tab-label--full">Отклоненные</span>
+                <span className="profile-tab-label profile-tab-label--short">Отклонённые</span>
               </button>
             </div>
           )}
@@ -608,6 +579,11 @@ function Profile() {
                     profileTab={profileTab}
                     moderationFilter={moderationFilter}
                     onImageError={handleImageError}
+                    fallbackAuthor={
+                      profile
+                        ? { id: profile.id, name: profile.name, avatar: profile.avatar }
+                        : null
+                    }
                   />
                 ))}
               </MasonryGrid>
@@ -632,16 +608,21 @@ function Profile() {
                   title={moderationFilter === 'pending' ? 'Нет публикаций, ожидающих рассмотрения' : 'Нет отклоненных публикаций'}
                   text={moderationFilter === 'pending' ? 'После одобрения работа появится в разделе «Моё портфолио»' : 'Здесь отображаются публикации, отклоненные модерацией'}
                   actions={
-                    <>
+                    <div className="profile-empty-actions">
                       <Link to="/create" className="btn btn-primary">Создать публикацию</Link>
                       <button
                         type="button"
                         className="btn btn-outline"
                         onClick={() => setModerationFilter(moderationFilter === 'pending' ? 'rejected' : 'pending')}
                       >
-                        {moderationFilter === 'pending' ? 'Перейти в отклоненные' : 'Перейти в ожидающие'}
+                        <span className="profile-tab-label profile-tab-label--full">
+                          {moderationFilter === 'pending' ? 'Перейти в отклонённые' : 'Перейти в ожидающие'}
+                        </span>
+                        <span className="profile-tab-label profile-tab-label--short">
+                          {moderationFilter === 'pending' ? 'Отклонённые' : 'Ожидают'}
+                        </span>
                       </button>
-                    </>
+                    </div>
                   }
                 />
               ) : (
@@ -730,6 +711,18 @@ function Profile() {
           )}
         </div>
       </div>
+
+      {!isOwnProfile && isAuthenticated && profile && !profile.is_banned && (
+        <div className="profile-follow-sticky">
+          <button
+            type="button"
+            onClick={handleFollow}
+            className={isFollowing ? 'btn btn-outline' : 'btn btn-primary'}
+          >
+            {isFollowing ? 'Отписаться' : 'Подписаться'}
+          </button>
+        </div>
+      )}
 
       {/* Модалка: Подписчики */}
       {showFollowersModal && (

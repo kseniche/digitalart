@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { apiFetch, ensureCsrfCookie, setAuthToken } from '../api';
+import { apiFetchLocal as apiFetch, ensureCsrfCookie, setAuthToken } from '../api';
 
 const AuthContext = createContext();
 
@@ -37,7 +37,7 @@ export const AuthProvider = ({ children }) => {
 
   const refreshUserFromServer = useCallback(async () => {
     try {
-      const res = await apiFetch('/api/user', { 
+      const res = await apiFetch('/api/user', {
         headers: { 
           'Accept': 'application/json',
         } 
