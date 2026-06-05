@@ -6,7 +6,6 @@ use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Models\Comment;
 use App\Models\CommentReport;
-use App\Notifications\CommentPublishedNotification;
 use App\Notifications\CommentRemovedByAdminNotification;
 use App\Notifications\CommentRestoredNotification;
 use App\Services\CommentModerationService;
@@ -436,7 +435,7 @@ class AdminCommentController extends Controller
                         'title' => $comment->post?->post_title ?? 'Публикация',
                         'post_id' => (string) ($comment->post_id ?? ''),
                     ],
-                    new CommentPublishedNotification($comment),
+                    null,
                     ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
                 );
             }

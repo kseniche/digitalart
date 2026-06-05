@@ -6,12 +6,12 @@ use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Support\AdminReportCsvBuilder;
 use App\Support\PostTags;
+use App\Support\ReportPeriodResolver;
 use App\Models\BannedWord;
 use App\Models\User;
 use App\Models\Post;
 use App\Models\Comment;
 use Illuminate\Database\QueryException;
-use App\Notifications\CommentPublishedNotification;
 use App\Notifications\CommentRemovedByAdminNotification;
 use App\Notifications\CommentRestoredNotification;
 use App\Notifications\PostApprovedNotification;
@@ -56,7 +56,7 @@ class AdminController extends Controller
     public function getStats(Request $request): JsonResponse
     {
         try {
-            [$from, $to] = $this->resolveReportPeriod($request->input('period'));
+            [$from, $to] = ReportPeriodResolver::resolve($request->input('period'));
 
             $userBase = User::withTrashed();
             $postBase = Post::withTrashed();
@@ -616,12 +616,22 @@ class AdminController extends Controller
             }
             
             // Поиск по заголовку или содержимому
-            if ($request->has('search')) {
-                $search = $request->search;
-                $query->where(function($q) use ($search) {
+            if ($request->filled('search')) {
+                $search = (string) $request->input('search');
+                $query->where(function ($q) use ($search) {
                     $q->where('post_title', 'like', "%{$search}%")
                       ->orWhere('post_content', 'like', "%{$search}%");
                 });
+            }
+
+            // Поиск по тегам (частичное совпадение внутри тега)
+            if ($request->filled('tag')) {
+                PostTags::applyFilter($query, (string) $request->input('tag'));
+            }
+
+            // Фильтр по категории
+            if ($request->filled('category_id')) {
+                $query->where('category_id', (int) $request->input('category_id'));
             }
 
             // Фильтрация по автору (для страницы публикаций конкретного пользователя)
@@ -1030,7 +1040,7 @@ class AdminController extends Controller
                         'title' => $comment->post?->post_title ?? 'Публикация',
                         'post_id' => (string) ($comment->post_id ?? ''),
                     ],
-                    new CommentPublishedNotification($comment),
+                    null,
                     ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
                 );
             }
@@ -1095,7 +1105,7 @@ class AdminController extends Controller
     {
         try {
             $periodKey = (string) $request->input('period', 'all');
-            [$from, $to] = $this->resolveReportPeriod($periodKey);
+            [$from, $to] = ReportPeriodResolver::resolve($periodKey);
             $periodLabel = $this->reportPeriodLabelRu($periodKey);
 
             $usersQuery = User::withTrashed()->with('roles');
@@ -1193,28 +1203,4 @@ class AdminController extends Controller
     /**
      * @return array{0: ?Carbon, 1: ?Carbon}
      */
-    private function resolveReportPeriod(?string $period): array
-    {
-        $period = $period ? trim($period) : 'all';
-
-        if ($period === '' || $period === 'all') {
-            return [null, null];
-        }
-
-        $to = now();
-
-        $from = match ($period) {
-            'week' => $to->copy()->subWeek(),
-            'month' => $to->copy()->subMonth(),
-            'quarter' => $to->copy()->subMonths(3),
-            'year' => $to->copy()->subYear(),
-            default => null,
-        };
-
-        if ($from === null) {
-            return [null, null];
-        }
-
-        return [$from, $to];
-    }
 }

@@ -6,6 +6,11 @@ return [
     'email_hint' => 'Подробная информация направлена на вашу электронную почту.',
 
     'templates' => [
+        UserNotificationType::PostFavorited->value => [
+            'title' => 'Добавили в избранное',
+            'body' => ':by_name добавил(а) вашу публикацию «:title» в избранное.',
+            'action' => '/post/:post_id',
+        ],
         UserNotificationType::PostPendingModeration->value => [
             'title' => 'Публикация на модерации',
             'body' => 'Публикация «:title» отправлена на проверку. Обычно решение принимается в течение 1–3 рабочих дней.',

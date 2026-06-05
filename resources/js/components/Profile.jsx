@@ -578,6 +578,7 @@ function Profile() {
                     post={post}
                     profileTab={profileTab}
                     moderationFilter={moderationFilter}
+                    hideAuthor={isOwnProfile && (profileTab === 'portfolio' || profileTab === 'drafts')}
                     onImageError={handleImageError}
                     fallbackAuthor={
                       profile

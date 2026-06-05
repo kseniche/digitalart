@@ -17,6 +17,11 @@ function AdminPosts() {
   const [error, setError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('pending');
   const [searchQuery, setSearchQuery] = useState('');
+  const [tagQuery, setTagQuery] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
+  const [tagDebounced, setTagDebounced] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [categories, setCategories] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [successMessage, setSuccessMessage] = useState('');
@@ -70,8 +75,24 @@ function AdminPosts() {
   }, [fetchStats]);
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchDebounced(searchQuery.trim());
+      setTagDebounced(tagQuery.trim());
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery, tagQuery]);
+
+  useEffect(() => {
+    apiFetch('/api/admin/categories')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setCategories(Array.isArray(list) ? list : []))
+      .catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
     fetchPosts();
-  }, [statusFilter, searchQuery, currentPage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, searchDebounced, tagDebounced, categoryFilter, currentPage]);
 
   const refreshPosts = () => {
     fetchPosts();
@@ -84,7 +105,9 @@ function AdminPosts() {
       const params = new URLSearchParams({
         page: currentPage,
         ...(statusFilter !== 'all' && { status: statusFilter }),
-        ...(searchQuery && { search: searchQuery }),
+        ...(searchDebounced && { search: searchDebounced }),
+        ...(tagDebounced && { tag: tagDebounced }),
+        ...(categoryFilter && { category_id: categoryFilter }),
       });
 
       const response = await apiFetch(`/api/admin/posts?${params}`, {
@@ -574,19 +597,50 @@ function AdminPosts() {
         <div className="admin-filters admin-filters--sticky">
           <input
             type="text"
-            placeholder="Поиск по заголовку или содержимому..."
+            placeholder="Поиск по названию или описанию..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setCurrentPage(1);
             }}
             className="admin-search-input"
+            aria-label="Поиск по названию или описанию"
           />
-
+          <input
+            type="text"
+            placeholder="Поиск по тегам..."
+            value={tagQuery}
+            onChange={(e) => {
+              setTagQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="admin-search-input admin-search-input--tag"
+            aria-label="Поиск по тегам"
+          />
+          <select
+            value={categoryFilter}
+            onChange={(e) => {
+              setCategoryFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="filter-select"
+            aria-label="Фильтр по категории"
+          >
+            <option value="">Все категории</option>
+            {categories.map((cat) => (
+              <option key={cat.id} value={String(cat.id)}>
+                {cat.name}
+              </option>
+            ))}
+          </select>
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setCurrentPage(1);
+            }}
             className="filter-select"
+            aria-label="Фильтр по статусу"
           >
             <option value="pending">На модерации</option>
             <option value="approved">Одобренные</option>
@@ -594,6 +648,20 @@ function AdminPosts() {
             <option value="deleted">Удаленные</option>
             <option value="all">Все публикации</option>
           </select>
+          {(searchQuery || tagQuery || categoryFilter) && (
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => {
+                setSearchQuery('');
+                setTagQuery('');
+                setCategoryFilter('');
+                setCurrentPage(1);
+              }}
+            >
+              Сбросить фильтры
+            </button>
+          )}
         </div>
       </div>
 

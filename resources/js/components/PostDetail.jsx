@@ -190,6 +190,7 @@ method: 'POST',
         if (createdComment?.id && createdComment?.auto_moderation_passed === true) {
           const commentForState = {
             id: createdComment.id,
+            userId: createdComment.author?.id ?? user?.id,
             author: createdComment.author
               ? `${createdComment.author.name || ''} ${createdComment.author.surname || ''}`.trim() || 'Неизвестный автор'
               : 'Неизвестный автор',
@@ -258,7 +259,7 @@ method: 'POST',
 
   const mapComments = React.useCallback((postData) => (postData.comments || []).map(comment => ({
     id: comment.id,
-    userId: comment.user_id,
+    userId: comment.user_id ?? comment.author?.id,
     author: comment.author ? `${comment.author.name} ${comment.author.user_surname || ''}`.trim() : 'Неизвестный автор',
     avatar: comment.author?.avatar_url || comment.author?.avatar || '/default-avatar.svg',
     text: comment.hidden_notice || comment.comment_content || '',

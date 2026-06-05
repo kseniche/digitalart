@@ -100,6 +100,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('admin')->middleware(['admin', 'throttle:admin-actions'])->group(function () {
         // Статистика
         Route::get('/stats', [AdminController::class, 'getStats']);
+        Route::get('/analytics', [\App\Http\Controllers\Api\AdminAnalyticsController::class, 'index']);
         
         // Отчет
         Route::get('/report', [AdminController::class, 'generateReport']);

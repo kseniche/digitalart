@@ -4,6 +4,7 @@ namespace App\Enums;
 
 enum UserNotificationType: string
 {
+    case PostFavorited = 'post_favorited';
     case PostPendingModeration = 'post_pending_moderation';
     case PostApproved = 'post_approved';
     case PostRejected = 'post_rejected';

@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import Alert from '../common/Alert';
 
 function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
   const { login } = useAuth();
-  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -129,27 +127,7 @@ function LoginModal({ onClose, onLogin, onSwitchToRegister }) {
           </button>
         </form>
 
-        <div style={{ textAlign: 'center', marginBottom: '0.75rem' }}>
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              navigate('/forgot-password');
-            }}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#7B0000',
-              cursor: 'pointer',
-              textDecoration: 'underline',
-              fontFamily: 'JetBrains Mono, monospace'
-            }}
-          >
-            Забыли пароль?
-          </button>
-        </div>
-
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
           <span style={{ color: '#6b7280', fontFamily: 'JetBrains Mono, monospace' }}>Нет аккаунта? </span>
           <button
             onClick={onSwitchToRegister}

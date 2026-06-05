@@ -4,7 +4,7 @@ import { getReturnState } from '../utils/navigation';
 import MediaPreview from './common/MediaPreview';
 import { useMasonryRelayout } from './common/MasonryGrid';
 
-function ProfilePostCard({ post, profileTab, moderationFilter, onImageError, fallbackAuthor }) {
+function ProfilePostCard({ post, profileTab, moderationFilter, onImageError, fallbackAuthor, hideAuthor = false }) {
   const author = post.author || fallbackAuthor;
   const location = useLocation();
   const linkState = getReturnState(location);
@@ -40,20 +40,8 @@ function ProfilePostCard({ post, profileTab, moderationFilter, onImageError, fal
             </div>
           )}
           <h3 className="card-title">{post.title}</h3>
-          {author && profileTab !== 'moderation' && (
-            <div className="card-author">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <img
-                  src={author.avatar || '/default-avatar.svg'}
-                  alt={author.name}
-                  className="author-avatar"
-                  onError={(e) => {
-                    e.target.src = '/default-avatar.svg';
-                  }}
-                />
-                <span className="author-name">{author.name}</span>
-              </div>
-            </div>
+          {author && profileTab !== 'moderation' && !hideAuthor && (
+            <div className="card-author">{author.name}</div>
           )}
           {profileTab === 'moderation' && moderationFilter === 'rejected' && (
             <p className="profile-post-rejection">

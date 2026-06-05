@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Enums\UserNotificationType;
 use App\Models\Like;
 use App\Models\Post;
+use App\Services\UserNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -14,6 +16,10 @@ use Illuminate\Support\Facades\Log;
  */
 class FavoriteController extends Controller
 {
+    public function __construct(
+        private readonly UserNotificationService $userNotifications,
+    ) {}
+
     /**
      * Добавить/убрать пост из избранного.
      * POST /api/posts/{id}/favorite
@@ -40,11 +46,22 @@ class FavoriteController extends Controller
 
         $user->favorites()->attach($id);
 
-        // Email-уведомление владельцу поста (не отправляем, если пользователь добавил свой пост)
+        // Внутреннее уведомление владельцу поста (не отправляем, если пользователь добавил свой пост)
         if ($post->user_id !== $user->id) {
             $post->load('author');
-            if ($post->author && !empty($post->author->email)) {
-                $post->author->notify(new \App\Notifications\PostFavoritedNotification($post));
+            if ($post->author) {
+                $byName = trim(($user->name ?? '').' '.($user->user_surname ?? ''));
+                $this->userNotifications->notify(
+                    $post->author,
+                    UserNotificationType::PostFavorited,
+                    [
+                        'title' => $post->post_title ?? 'Публикация',
+                        'post_id' => (string) $post->id,
+                        'by_name' => $byName !== '' ? $byName : 'Пользователь',
+                    ],
+                    null,
+                    ['post_id' => $post->id, 'by_user_id' => $user->id]
+                );
             }
         }
 

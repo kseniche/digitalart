@@ -6,7 +6,6 @@ use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Models\Comment;
 use App\Models\CommentReport;
-use App\Notifications\CommentReportSubmittedNotification;
 use App\Services\CommentModerationService;
 use App\Services\UserNotificationService;
 use Illuminate\Http\JsonResponse;
@@ -39,8 +38,8 @@ class CommentReportController extends Controller
             ], 422);
         }
 
-        if ($comment->user_id === $request->user()->id) {
-            return response()->json(['message' => 'Нельзя пожаловаться на свой комментарий'], 422);
+        if ((int) $comment->user_id === (int) $request->user()->id) {
+            return response()->json(['message' => 'Нельзя пожаловаться на свой комментарий'], 403);
         }
 
         if ($comment->deleted_at || $comment->moderation_status !== 'approved') {
@@ -73,7 +72,7 @@ class CommentReportController extends Controller
                 'title' => $comment->post?->post_title ?? 'Публикация',
                 'post_id' => (string) ($comment->post_id ?? ''),
             ],
-            new CommentReportSubmittedNotification($comment, $report),
+            null,
             ['comment_id' => $comment->id, 'report_id' => $report->id]
         );
 

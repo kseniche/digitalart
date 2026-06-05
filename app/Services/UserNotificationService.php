@@ -39,6 +39,23 @@ class UserNotificationService
 
         $emailSent = false;
         if ($mailNotification !== null && $this->shouldSendMail($user)) {
+            // Защита от ложного `email_sent`: если Notification не использует mail-канал,
+            // Laravel не отправит письмо, но мы всё равно создадим внутреннее уведомление.
+            $channels = [];
+            try {
+                if (method_exists($mailNotification, 'via')) {
+                    $channels = (array) $mailNotification->via($user);
+                }
+            } catch (\Throwable) {
+                $channels = [];
+            }
+
+            if (! in_array('mail', $channels, true)) {
+                $mailNotification = null;
+            }
+        }
+
+        if ($mailNotification !== null && $this->shouldSendMail($user)) {
             try {
                 $user->notify($mailNotification);
                 $emailSent = true;

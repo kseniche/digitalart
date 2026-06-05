@@ -6,8 +6,6 @@ use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
 use App\Models\Comment;
 use App\Models\Post;
-use App\Notifications\CommentPublishedNotification;
-use App\Notifications\NewCommentNotification;
 use App\Services\AutoModerationService;
 use App\Services\UserNotificationService;
 use Illuminate\Http\Request;
@@ -78,7 +76,7 @@ class CommentController extends Controller
                         'title' => $post->post_title ?? 'Публикация',
                         'post_id' => (string) $post->id,
                     ],
-                    new CommentPublishedNotification($comment),
+                    null,
                     ['comment_id' => $comment->id, 'post_id' => $post->id]
                 );
             }
@@ -95,7 +93,7 @@ class CommentController extends Controller
                             'title' => $post->post_title ?? 'Публикация',
                             'post_id' => (string) $post->id,
                         ],
-                        new NewCommentNotification($comment),
+                        null,
                         ['comment_id' => $comment->id, 'post_id' => $post->id]
                     );
                 }

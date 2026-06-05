@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Tests\TestCase;
+use App\Models\Category;
 use App\Models\User;
 use App\Models\Post;
 use App\Models\Comment;
@@ -520,6 +521,95 @@ class AdminApiTest extends TestCase
         $post->refresh();
         $this->assertSame(['beta'], $post->tags);
         $this->assertDatabaseHas('posts', ['id' => $post->id]);
+    }
+
+    public function test_admin_can_filter_posts_by_tag_and_category(): void
+    {
+        $admin = User::factory()->create();
+        $admin->assignRole('admin');
+        $token = $admin->createToken('test-token')->plainTextToken;
+
+        $categoryA = Category::query()->create(['name' => 'Digital Art']);
+        $categoryB = Category::query()->create(['name' => 'Sculpture']);
+
+        $author = User::factory()->create();
+        Post::factory()->create([
+            'user_id' => $author->id,
+            'category_id' => $categoryA->id,
+            'tags' => ['digital-art', '3d'],
+            'moderation_status' => 'approved',
+        ]);
+        Post::factory()->create([
+            'user_id' => $author->id,
+            'category_id' => $categoryB->id,
+            'tags' => ['concept-art'],
+            'moderation_status' => 'approved',
+        ]);
+
+        $byTag = $this->withHeaders(['Authorization' => 'Bearer ' . $token])
+            ->getJson('/api/admin/posts?tag=digital&status=approved');
+
+        $byTag->assertStatus(200);
+        $this->assertCount(1, $byTag->json('data'));
+        $this->assertStringContainsString('digital', strtolower($byTag->json('data.0.tags.0') ?? ''));
+
+        $byCategory = $this->withHeaders(['Authorization' => 'Bearer ' . $token])
+            ->getJson('/api/admin/posts?category_id=' . $categoryB->id . '&status=approved');
+
+        $byCategory->assertStatus(200);
+        $this->assertCount(1, $byCategory->json('data'));
+        $this->assertEquals($categoryB->id, $byCategory->json('data.0.category_id'));
+    }
+
+    public function test_admin_can_get_analytics(): void
+    {
+        $admin = User::factory()->create();
+        $admin->assignRole('admin');
+        $token = $admin->createToken('test-token')->plainTextToken;
+
+        $author = User::factory()->create();
+        Post::factory()->count(2)->create([
+            'user_id' => $author->id,
+            'moderation_status' => 'approved',
+            'is_draft' => false,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => 'Bearer ' . $token])
+            ->getJson('/api/admin/analytics?period=month');
+
+        $response->assertStatus(200)
+            ->assertJsonStructure([
+                'period',
+                'charts' => [
+                    'users' => [['date', 'label', 'count']],
+                    'posts' => [['date', 'label', 'count']],
+                ],
+                'summary' => [
+                    'new_users',
+                    'published_posts',
+                    'pending_moderation',
+                    'rejected_posts',
+                    'new_comments',
+                    'deleted_comments',
+                    'avg_likes_per_post',
+                ],
+                'top_categories',
+                'top_tags',
+                'top_authors',
+            ]);
+
+        $this->assertGreaterThanOrEqual(2, $response->json('summary.published_posts'));
+    }
+
+    public function test_regular_user_cannot_access_admin_analytics(): void
+    {
+        $user = User::factory()->create();
+        $user->assignRole('user');
+        $token = $user->createToken('test-token')->plainTextToken;
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $token])
+            ->getJson('/api/admin/analytics?period=week')
+            ->assertStatus(403);
     }
 }
 

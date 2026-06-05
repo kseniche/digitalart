@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import ConfirmModal from '../modals/ConfirmModal';
@@ -16,6 +16,23 @@ function AdminTags() {
   const [successMessage, setSuccessMessage] = useState('');
   const [confirmDelete, setConfirmDelete] = useState({ open: false, tag: null });
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [listSearch, setListSearch] = useState('');
+  const [sortBy, setSortBy] = useState('name');
+
+  const filteredTags = useMemo(() => {
+    let list = tags;
+    const query = listSearch.trim().toLowerCase();
+    if (query) {
+      list = list.filter((tag) => tag.name.toLowerCase().includes(query));
+    }
+    return [...list].sort((a, b) => {
+      if (sortBy === 'count_desc') {
+        return (b.posts_count || 0) - (a.posts_count || 0)
+          || a.name.localeCompare(b.name, 'ru');
+      }
+      return a.name.localeCompare(b.name, 'ru');
+    });
+  }, [tags, listSearch, sortBy]);
 
   const fetchTags = async () => {
     try {
@@ -87,8 +104,42 @@ function AdminTags() {
 
       <div>
         <h3 className="admin-categories-list-title">
-          Список тегов ({tags.length})
+          Список тегов ({filteredTags.length}
+          {listSearch && tags.length !== filteredTags.length ? ` из ${tags.length}` : ''}
+          )
         </h3>
+
+        {!loading && tags.length > 0 && (
+          <div className="admin-filters" style={{ marginBottom: '1rem' }}>
+            <input
+              type="text"
+              placeholder="Поиск по названию тега..."
+              value={listSearch}
+              onChange={(e) => setListSearch(e.target.value)}
+              className="admin-search-input"
+              aria-label="Поиск тегов"
+            />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="filter-select"
+              aria-label="Сортировка тегов"
+            >
+              <option value="name">По названию (А–Я)</option>
+              <option value="count_desc">По количеству публикаций</option>
+            </select>
+            {listSearch && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => setListSearch('')}
+              >
+                Сбросить
+              </button>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <EmptyState title="Загрузка тегов" />
         ) : tags.length === 0 ? (
@@ -96,9 +147,23 @@ function AdminTags() {
             title="Тегов пока нет"
             text="Теги появятся после публикаций с указанными тегами."
           />
+        ) : filteredTags.length === 0 ? (
+          <EmptyState
+            title="Ничего не найдено"
+            text="По вашему запросу теги не найдены."
+            actions={(
+              <button
+                type="button"
+                className="admin-btn admin-btn-outline admin-btn-sm"
+                onClick={() => setListSearch('')}
+              >
+                Сбросить поиск
+              </button>
+            )}
+          />
         ) : (
           <ul className="admin-categories-list">
-            {tags.map((tag) => (
+            {filteredTags.map((tag) => (
               <li key={tag.name} className="admin-category-item">
                 <span>
                   {tag.name}{' '}

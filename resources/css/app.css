@@ -2989,6 +2989,11 @@ button.feed-nav-chip.post-detail-category {
   cursor: pointer;
 }
 
+.card-author .feed-guest-link {
+  text-decoration: none;
+  color: inherit;
+}
+
 .post-comment-sort-btn {
   cursor: pointer;
 }
@@ -4247,6 +4252,12 @@ button.feed-nav-chip.post-detail-category {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.notification-item-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .notification-item-delete {

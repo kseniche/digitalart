@@ -452,8 +452,8 @@ function AdminComments() {
           <AdminModerationStats
             items={[
               { value: stats.pending_review, label: 'На проверке' },
-              { value: stats.expiring_soon ?? 0, label: 'Истекает срок' },
-              { value: stats.pending_permanent_delete ?? 0, label: 'Ожидают purge' },
+              { value: stats.expiring_soon ?? 0, label: 'Истекает срок очереди' },
+              { value: stats.pending_permanent_delete ?? 0, label: 'Ожидают окончательного удаления' },
               { value: stats.reports, label: 'Жалобы' },
               { value: stats.hidden, label: 'Скрытые' },
               { value: stats.total, label: 'Всего' },

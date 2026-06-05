@@ -18,7 +18,11 @@ function CommentActionsMenu({ commentId, authorUserId, isHidden, onReported, onL
 
   if (isHidden) return null;
 
-  const isOwnComment = user && authorUserId != null && Number(authorUserId) === Number(user.id);
+  const isOwnComment = Boolean(
+    user?.id != null
+    && authorUserId != null
+    && Number(authorUserId) === Number(user.id)
+  );
   if (isOwnComment) return null;
 
   const handleMenuClick = () => {

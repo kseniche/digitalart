@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetchLocal as apiFetch } from '../../api';
 import { useToast } from '../../contexts/ToastContext';
 import ConfirmModal from '../modals/ConfirmModal';
@@ -19,6 +19,22 @@ function AdminCategories() {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState({ open: false, category: null });
+  const [listSearch, setListSearch] = useState('');
+  const [usageFilter, setUsageFilter] = useState('all');
+
+  const filteredCategories = useMemo(() => {
+    let list = categories;
+    const query = listSearch.trim().toLowerCase();
+    if (query) {
+      list = list.filter((cat) => cat.name.toLowerCase().includes(query));
+    }
+    if (usageFilter === 'used') {
+      list = list.filter((cat) => (cat.posts_count || 0) > 0);
+    } else if (usageFilter === 'empty') {
+      list = list.filter((cat) => !(cat.posts_count || 0));
+    }
+    return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  }, [categories, listSearch, usageFilter]);
 
   const fetchCategories = async () => {
     try {
@@ -227,8 +243,48 @@ function AdminCategories() {
 
       <div>
         <h3 className="admin-categories-list-title">
-          Список категорий ({categories.length})
+          Список категорий ({filteredCategories.length}
+          {(listSearch || usageFilter !== 'all') && categories.length !== filteredCategories.length
+            ? ` из ${categories.length}`
+            : ''}
+          )
         </h3>
+
+        {!loading && categories.length > 0 && (
+          <div className="admin-filters" style={{ marginBottom: '1rem' }}>
+            <input
+              type="text"
+              placeholder="Поиск по названию категории..."
+              value={listSearch}
+              onChange={(e) => setListSearch(e.target.value)}
+              className="admin-search-input"
+              aria-label="Поиск категорий"
+            />
+            <select
+              value={usageFilter}
+              onChange={(e) => setUsageFilter(e.target.value)}
+              className="filter-select"
+              aria-label="Фильтр по использованию"
+            >
+              <option value="all">Все категории</option>
+              <option value="used">С публикациями</option>
+              <option value="empty">Без публикаций</option>
+            </select>
+            {(listSearch || usageFilter !== 'all') && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  setListSearch('');
+                  setUsageFilter('all');
+                }}
+              >
+                Сбросить
+              </button>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <EmptyState title="Загрузка категорий" />
         ) : categories.length === 0 ? (
@@ -237,9 +293,26 @@ function AdminCategories() {
             text="Создайте первую категорию для удобной модерации публикаций."
             actions={<button type="button" className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => setNewName('Новая категория')}>Заполнить пример</button>}
           />
+        ) : filteredCategories.length === 0 ? (
+          <EmptyState
+            title="Ничего не найдено"
+            text="Измените поисковый запрос или сбросьте фильтры."
+            actions={(
+              <button
+                type="button"
+                className="admin-btn admin-btn-outline admin-btn-sm"
+                onClick={() => {
+                  setListSearch('');
+                  setUsageFilter('all');
+                }}
+              >
+                Сбросить фильтры
+              </button>
+            )}
+          />
         ) : (
           <ul className="admin-categories-list">
-            {categories.map((cat) => (
+            {filteredCategories.map((cat) => (
               <li key={cat.id} className="admin-category-item">
                 {editingId === cat.id ? (
                   <form onSubmit={handleUpdate} style={{ display: 'flex', gap: '0.5rem', flex: 1 }}>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 function MarkdownLinkDialog({ open, initialText = '', onConfirm, onCancel }) {
   const [text, setText] = useState(initialText);
@@ -15,19 +16,28 @@ function MarkdownLinkDialog({ open, initialText = '', onConfirm, onCancel }) {
     return null;
   }
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const handleConfirm = () => {
     onConfirm(text.trim() || 'ссылка', url.trim() || 'https://');
   };
 
-  return (
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleConfirm();
+    }
+  };
+
+  return createPortal(
     <div className="markdown-link-dialog-overlay" onClick={onCancel} role="presentation">
-      <form
+      <div
         className="markdown-link-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="md-link-dialog-title"
         onClick={(e) => e.stopPropagation()}
-        onSubmit={handleSubmit}
+        onKeyDown={handleKeyDown}
       >
-        <h3 className="markdown-link-dialog__title">Вставить ссылку</h3>
+        <h3 id="md-link-dialog-title" className="markdown-link-dialog__title">Вставить ссылку</h3>
         <label className="form-label" htmlFor="md-link-text">
           Текст ссылки
         </label>
@@ -55,12 +65,13 @@ function MarkdownLinkDialog({ open, initialText = '', onConfirm, onCancel }) {
           <button type="button" className="btn btn-outline" onClick={onCancel}>
             Отмена
           </button>
-          <button type="submit" className="btn btn-primary">
+          <button type="button" className="btn btn-primary" onClick={handleConfirm}>
             Вставить
           </button>
         </div>
-      </form>
-    </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

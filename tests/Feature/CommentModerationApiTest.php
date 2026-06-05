@@ -66,6 +66,31 @@ class CommentModerationApiTest extends TestCase
         $duplicate->assertStatus(422);
     }
 
+    public function test_user_cannot_report_own_comment(): void
+    {
+        $author = User::factory()->create();
+        $post = Post::factory()->create([
+            'user_id' => $author->id,
+            'moderation_status' => 'approved',
+            'is_draft' => false,
+            'published_at' => now()->subMinute(),
+        ]);
+        $comment = $this->approvedComment($post, $author);
+        $token = $author->createToken('test')->plainTextToken;
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson("/api/comments/{$comment->id}/report", [
+                'reason' => 'spam',
+            ])
+            ->assertStatus(403)
+            ->assertJson(['message' => 'Нельзя пожаловаться на свой комментарий']);
+
+        $this->assertDatabaseMissing('comment_reports', [
+            'comment_id' => $comment->id,
+            'user_id' => $author->id,
+        ]);
+    }
+
     public function test_five_distinct_reports_auto_hide_comment(): void
     {
         config()->set('comment_moderation.auto_hide_reports_count', 5);

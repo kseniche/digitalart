@@ -60,18 +60,12 @@ function FeedPostCard({ post, isAuthenticated, onGuestClick }) {
         </h3>
         <div className="card-author">
           {isAuthenticated ? (
-            <Link to={`/profile/${post.author.id}`} state={profileLinkState} style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <img
-                  src={post.author.avatar_url || post.author.avatar || '/default-avatar.svg'}
-                  alt={post.author.name}
-                  className="author-avatar"
-                  onError={(e) => {
-                    e.target.src = '/default-avatar.svg';
-                  }}
-                />
-                <span className="author-name">{post.author.name}</span>
-              </div>
+            <Link
+              to={`/profile/${post.author.id}`}
+              state={profileLinkState}
+              className="feed-guest-link"
+            >
+              {post.author.name}
             </Link>
           ) : (
             <span onClick={onGuestClick} className="feed-guest-link">
