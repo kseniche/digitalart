@@ -92,6 +92,7 @@ class CommentController extends Controller
                             'author_name' => $authorName !== '' ? $authorName : 'Пользователь',
                             'title' => $post->post_title ?? 'Публикация',
                             'post_id' => (string) $post->id,
+                            'comment_excerpt' => $comment->comment_content,
                         ],
                         null,
                         ['comment_id' => $comment->id, 'post_id' => $post->id]

@@ -8,6 +8,7 @@ use App\Models\CommentReport;
 use App\Models\User;
 use App\Models\UserNotification;
 use App\Notifications\CommentReportReviewedNotification;
+use App\Support\CommentReportOutcomeText;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -111,8 +112,22 @@ class UserNotificationService
         };
     }
 
+    public function commentExcerptSuffix(?string $text, int $maxLen = 60): string
+    {
+        $text = preg_replace('/\s+/u', ' ', trim(strip_tags((string) $text))) ?? '';
+        if ($text === '') {
+            return '';
+        }
+
+        return ' «'.Str::limit($text, $maxLen, '…').'»';
+    }
+
     public function notifyCommentReporters(Comment $comment, string $outcomeText): void
     {
+        if (! CommentReport::query()->where('comment_id', $comment->id)->exists()) {
+            return;
+        }
+
         $comment->loadMissing(['post']);
         $postTitle = $comment->post?->post_title ?? 'Публикация';
         $postId = (string) ($comment->post_id ?? '');
@@ -138,11 +153,25 @@ class UserNotificationService
                     'title' => $postTitle,
                     'post_id' => $postId,
                     'review_outcome' => $outcomeText,
+                    'comment_excerpt' => $comment->comment_content,
                 ],
                 $mail,
                 ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
             );
         }
+    }
+
+    public function notifyReportersUnjustified(Comment $comment): void
+    {
+        $this->notifyCommentReporters($comment, CommentReportOutcomeText::unjustified());
+    }
+
+    public function notifyReportersJustified(Comment $comment, string $measure, ?string $details = null): void
+    {
+        $this->notifyCommentReporters(
+            $comment,
+            CommentReportOutcomeText::justified($measure, $details)
+        );
     }
 
     private function shouldSendMail(User $user): bool
@@ -170,6 +199,14 @@ class UserNotificationService
 
         if (! isset($normalized['reason_suffix']) && isset($normalized['reason'])) {
             $normalized['reason_suffix'] = $this->reasonSuffix($normalized['reason']);
+        }
+
+        if (! isset($normalized['comment_excerpt_suffix']) && isset($normalized['comment_excerpt'])) {
+            $normalized['comment_excerpt_suffix'] = $this->commentExcerptSuffix($normalized['comment_excerpt']);
+        }
+
+        if (! isset($normalized['comment_excerpt_suffix'])) {
+            $normalized['comment_excerpt_suffix'] = '';
         }
 
         return $normalized;

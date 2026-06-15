@@ -14,6 +14,8 @@ use App\Http\Controllers\Api\RecommendationsController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminCommentController;
 use App\Http\Controllers\Api\CommentReportController;
+use App\Http\Controllers\Api\PostReportController;
+use App\Http\Controllers\Api\AdminPostReportController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CountryController;
 use App\Http\Controllers\Api\UserNotificationController;
@@ -77,6 +79,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/comments/{id}/like', [CommentController::class, 'toggleLike'])->middleware(['not_banned', 'throttle:social-actions']);
     Route::get('/comment-report-reasons', [CommentReportController::class, 'reasons']);
     Route::post('/comments/{comment}/report', [CommentReportController::class, 'store'])->middleware(['not_banned', 'throttle:social-actions']);
+    Route::get('/post-report-reasons', [PostReportController::class, 'reasons']);
+    Route::post('/posts/{post}/report', [PostReportController::class, 'store'])->middleware(['not_banned', 'throttle:social-actions']);
 
     // Избранное (критерий 3.8)
     Route::post('/posts/{id}/favorite', [FavoriteController::class, 'toggleFavorite'])->middleware(['not_banned', 'throttle:social-actions']);
@@ -123,6 +127,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/posts/{id}/reject', [AdminController::class, 'rejectPost']);
         Route::delete('/posts/{post}', [AdminController::class, 'deletePost']);
         Route::post('/posts/{id}/restore', [AdminController::class, 'restorePost']);
+
+        // Жалобы на публикации
+        Route::get('/post-reports/stats', [AdminPostReportController::class, 'stats']);
+        Route::get('/post-reports', [AdminPostReportController::class, 'index']);
+        Route::post('/post-reports/{id}/confirm', [AdminPostReportController::class, 'confirm']);
+        Route::post('/post-reports/{id}/reject', [AdminPostReportController::class, 'reject']);
         
         // Управление комментариями
         Route::get('/comments/stats', [AdminCommentController::class, 'stats']);

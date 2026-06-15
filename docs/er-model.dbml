@@ -1,0 +1,241 @@
+// ER-модель блога «Цифровое искусство»
+// Вставьте в https://dbdiagram.io → Import → Paste DBML
+// Соответствует таблицам 2–13 пояснительной записки и миграциям Laravel
+
+Project digital_art_blog {
+  database_type: 'MySQL'
+  Note: 'Блог о цифровом искусстве. Laravel 12 + MySQL 8.'
+}
+
+// --- Перечисления (ENUM в MySQL) ---
+
+Enum media_type_enum {
+  image
+  video
+}
+
+Enum moderation_status_enum {
+  pending
+  approved
+  rejected
+}
+
+// --- Справочники ---
+
+Table countries {
+  id bigint [pk, increment, note: 'Идентификатор']
+  code varchar(2) [unique, not null, note: 'Код страны ISO']
+  name_ru varchar(128) [not null, note: 'Наименование на русском']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Note: 'Таблица 12 – Справочник стран'
+}
+
+Table categories {
+  id bigint [pk, increment, note: 'Идентификатор']
+  name varchar(255) [unique, not null, note: 'Название категории']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Note: 'Таблица 7 – Категории публикаций'
+}
+
+// --- Пользователи ---
+
+Table users {
+  id bigint [pk, increment, note: 'Идентификатор пользователя']
+  name varchar(100) [not null, note: 'Имя']
+  user_surname varchar(100) [note: 'Фамилия']
+  email varchar(255) [unique, not null, note: 'Электронная почта']
+  username varchar(100) [unique, not null, note: 'Логин']
+  phone varchar(20) [note: 'Телефон']
+  password varchar(255) [not null, note: 'Хэш пароля (bcrypt)']
+  avatar varchar(255) [note: 'Путь к файлу аватара']
+  country_id bigint [ref: > countries.id, note: 'Страна из справочника']
+  website varchar(255) [note: 'Сайт']
+  bio text [note: 'Биография']
+  is_banned boolean [not null, default: false, note: 'Признак блокировки']
+  ban_reason text [note: 'Причина блокировки']
+  email_notifications_enabled boolean [not null, default: true, note: 'Уведомления по email']
+  terms_accepted_at timestamp [note: 'Принятие пользовательского соглашения']
+  comment_rules_accepted_at timestamp [note: 'Принятие правил комментирования']
+  email_verified_at timestamp [note: 'Подтверждение email']
+  remember_token varchar(100) [note: 'Токен «запомнить меня»']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  deleted_at timestamp [note: 'Мягкое удаление']
+
+  Note: 'Таблица 2 – Пользователи'
+}
+
+// --- Контент ---
+
+Table posts {
+  id bigint [pk, increment, note: 'Идентификатор публикации']
+  post_title varchar(255) [not null, note: 'Заголовок']
+  post_content text [note: 'Текст (Markdown)']
+  media_path varchar(500) [note: 'Путь к медиафайлу в S3']
+  media_type media_type_enum [not null, default: 'image', note: 'Тип медиа']
+  tags json [note: 'Теги (массив JSON)']
+  user_id bigint [not null, ref: > users.id, note: 'Автор']
+  category_id bigint [ref: > categories.id, note: 'Категория']
+  is_draft boolean [not null, default: false, note: 'Черновик']
+  published_at datetime [note: 'Дата и время публикации']
+  moderation_status moderation_status_enum [not null, default: 'approved', note: 'Статус модерации']
+  approved_at timestamp [note: 'Дата одобрения']
+  moderation_rejection_reason text [note: 'Причина отклонения']
+  auto_moderation_passed boolean [note: 'Результат автомодерации']
+  auto_moderation_reason text [note: 'Причина автомодерации']
+  auto_moderation_checked_at timestamp [note: 'Дата проверки автомодерации']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  deleted_at timestamp [note: 'Мягкое удаление']
+
+  indexes {
+    moderation_status
+    user_id
+    category_id
+  }
+
+  Note: 'Таблица 3 – Публикации (posts)'
+}
+
+Table comments {
+  id bigint [pk, increment, note: 'Идентификатор комментария']
+  comment_content text [not null, note: 'Текст комментария']
+  user_id bigint [not null, ref: > users.id, note: 'Автор']
+  post_id bigint [not null, ref: > posts.id, note: 'Публикация']
+  moderation_status moderation_status_enum [not null, default: 'pending', note: 'Статус модерации']
+  approved_at timestamp [note: 'Дата одобрения']
+  admin_reviewed_at timestamp [note: 'Проверка администратором']
+  is_hidden boolean [not null, default: false, note: 'Скрытие из-за жалоб']
+  hidden_at timestamp [note: 'Дата скрытия']
+  auto_moderation_passed boolean [note: 'Результат автомодерации']
+  auto_moderation_reason text [note: 'Причина автомодерации']
+  auto_moderation_checked_at timestamp [note: 'Дата проверки автомодерации']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  deleted_at timestamp [note: 'Мягкое удаление']
+
+  indexes {
+    moderation_status
+    post_id
+    user_id
+  }
+
+  Note: 'Таблица 4 – Комментарии'
+}
+
+// --- Социальные связи ---
+
+Table likes {
+  id bigint [pk, increment, note: 'Идентификатор']
+  user_id bigint [not null, ref: > users.id, note: 'Пользователь']
+  post_id bigint [not null, ref: > posts.id, note: 'Публикация']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  deleted_at timestamp [note: 'Снятие лайка (soft delete)']
+
+  indexes {
+    (user_id, post_id) [unique]
+  }
+
+  Note: 'Таблица 5 – Лайки публикаций'
+}
+
+Table followers {
+  id bigint [pk, increment, note: 'Идентификатор записи']
+  follower_id bigint [not null, ref: > users.id, note: 'Кто подписался']
+  following_id bigint [not null, ref: > users.id, note: 'На кого подписались']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  deleted_at timestamp [note: 'Отписка (soft delete)']
+
+  indexes {
+    (follower_id, following_id) [unique]
+  }
+
+  Note: 'Таблица 6 – Подписки'
+}
+
+Table favorites {
+  id bigint [pk, increment, note: 'Идентификатор']
+  user_id bigint [not null, ref: > users.id, note: 'Пользователь']
+  post_id bigint [not null, ref: > posts.id, note: 'Публикация']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  indexes {
+    (user_id, post_id) [unique]
+  }
+
+  Note: 'Таблица 8 – Избранное'
+}
+
+Table comment_likes {
+  id bigint [pk, increment, note: 'Идентификатор']
+  user_id bigint [not null, ref: > users.id, note: 'Пользователь']
+  comment_id bigint [not null, ref: > comments.id, note: 'Комментарий']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  indexes {
+    (user_id, comment_id) [unique]
+  }
+
+  Note: 'Таблица 9 – Лайки комментариев'
+}
+
+// --- Модерация ---
+
+Table banned_words {
+  id bigint [pk, increment, note: 'Идентификатор']
+  word varchar(255) [unique, not null, note: 'Запрещённое слово']
+  created_by bigint [ref: > users.id, note: 'Администратор, добавивший слово']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  Note: 'Таблица 10 – Словарь автомодерации'
+}
+
+Table comment_reports {
+  id bigint [pk, increment, note: 'Идентификатор жалобы']
+  comment_id bigint [not null, ref: > comments.id, note: 'Комментарий']
+  user_id bigint [not null, ref: > users.id, note: 'Заявитель']
+  reason varchar(64) [not null, note: 'Причина (ключ из config)']
+  other_text text [note: 'Пояснение для варианта «Другое»']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  indexes {
+    (comment_id, user_id) [unique]
+    comment_id
+    created_at
+  }
+
+  Note: 'Таблица 11 – Жалобы на комментарии'
+}
+
+// --- Уведомления ---
+
+Table user_notifications {
+  id bigint [pk, increment, note: 'Идентификатор']
+  user_id bigint [not null, ref: > users.id, note: 'Получатель']
+  type varchar(64) [not null, note: 'Тип события (UserNotificationType)']
+  title varchar(255) [not null, note: 'Заголовок']
+  body text [not null, note: 'Текст уведомления']
+  action_url varchar(512) [note: 'Ссылка для перехода в SPA']
+  meta json [note: 'Доп. данные: post_id, comment_id и т.д.']
+  email_sent boolean [not null, default: false, note: 'Письмо отправлено']
+  read_at timestamp [note: 'Дата прочтения']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+
+  indexes {
+    (user_id, read_at, created_at)
+    (user_id, created_at)
+  }
+
+  Note: 'Таблица 13 – Внутренние уведомления пользователя'
+}

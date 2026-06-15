@@ -4,24 +4,22 @@ namespace App\Http\Controllers\Api;
 
 use App\Enums\UserNotificationType;
 use App\Http\Controllers\Controller;
-use App\Models\Comment;
-use App\Models\CommentReport;
-use App\Services\CommentModerationService;
+use App\Models\Post;
+use App\Models\PostReport;
 use App\Services\UserNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
-class CommentReportController extends Controller
+class PostReportController extends Controller
 {
     public function __construct(
-        private readonly CommentModerationService $commentModeration,
         private readonly UserNotificationService $userNotifications,
     ) {}
 
-    public function store(Request $request, Comment $comment): JsonResponse
+    public function store(Request $request, Post $post): JsonResponse
     {
-        $reasonKeys = array_keys(config('comment_moderation.report_reasons', []));
+        $reasonKeys = array_keys(config('post_reports.report_reasons', []));
 
         $data = $request->validate([
             'reason' => ['required', 'string', Rule::in($reasonKeys)],
@@ -38,54 +36,50 @@ class CommentReportController extends Controller
             ], 422);
         }
 
-        if ((int) $comment->user_id === (int) $request->user()->id) {
-            return response()->json(['message' => 'Нельзя пожаловаться на свой комментарий'], 403);
+        if ((int) $post->user_id === (int) $request->user()->id) {
+            return response()->json(['message' => 'Нельзя пожаловаться на свою публикацию'], 403);
         }
 
-        if ($comment->deleted_at || $comment->moderation_status !== 'approved') {
-            return response()->json(['message' => 'Комментарий недоступен'], 404);
+        if ($post->trashed() || ! $post->isPubliclyVisible()) {
+            return response()->json(['message' => 'Публикация недоступна'], 404);
         }
 
-        $exists = CommentReport::query()
-            ->where('comment_id', $comment->id)
+        $exists = PostReport::query()
+            ->where('post_id', $post->id)
             ->where('user_id', $request->user()->id)
             ->exists();
 
         if ($exists) {
-            return response()->json(['message' => 'Вы уже отправляли жалобу на этот комментарий'], 422);
+            return response()->json(['message' => 'Вы уже отправляли жалобу на эту публикацию'], 422);
         }
 
-        $report = CommentReport::create([
-            'comment_id' => $comment->id,
+        $report = PostReport::create([
+            'post_id' => $post->id,
             'user_id' => $request->user()->id,
             'reason' => $data['reason'],
             'other_text' => $data['reason'] === 'other' ? trim((string) $data['other_text']) : null,
         ]);
 
-        $comment->refresh()->loadMissing('post');
-        $this->commentModeration->applyReportAndMaybeHide($comment);
-
         $this->userNotifications->notify(
             $request->user(),
-            UserNotificationType::ReportSubmitted,
+            UserNotificationType::PostReportSubmitted,
             [
-                'title' => $comment->post?->post_title ?? 'Публикация',
-                'post_id' => (string) ($comment->post_id ?? ''),
-                'comment_excerpt' => $comment->comment_content,
+                'title' => $post->post_title ?? 'Публикация',
+                'post_id' => (string) $post->id,
             ],
             null,
-            ['comment_id' => $comment->id, 'report_id' => $report->id]
+            ['post_id' => $post->id, 'report_id' => $report->id]
         );
 
         return response()->json([
-            'message' => 'Жалоба принята. Комментарий будет проверен модератором.',
+            'message' => 'Жалоба принята. Публикация будет проверена модератором.',
         ], 201);
     }
 
     public function reasons(): JsonResponse
     {
         $reasons = [];
-        foreach (config('comment_moderation.report_reasons', []) as $key => $label) {
+        foreach (config('post_reports.report_reasons', []) as $key => $label) {
             $reasons[] = ['value' => $key, 'label' => $label];
         }
 

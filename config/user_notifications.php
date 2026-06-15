@@ -26,6 +26,11 @@ return [
             'body' => 'Публикация «:title» не прошла модерацию.:reason_suffix Вы можете исправить материал и отправить повторно.',
             'action' => '/post/:post_id',
         ],
+        UserNotificationType::PostHiddenByReport->value => [
+            'title' => 'Публикация скрыта',
+            'body' => 'Публикация «:title» скрыта по результатам рассмотрения жалобы администрацией.',
+            'action' => '/post/:post_id',
+        ],
         UserNotificationType::PostDeleted->value => [
             'title' => 'Публикация удалена',
             'body' => 'Публикация «:title» снята с площадки администратором.:reason_suffix',
@@ -43,7 +48,7 @@ return [
         ],
         UserNotificationType::CommentDeleted->value => [
             'title' => 'Комментарий удалён',
-            'body' => ':delete_context:reason_suffix',
+            'body' => ':delete_context Публикация «:title».:reason_suffix',
             'action' => '/post/:post_id',
         ],
         UserNotificationType::CommentRestored->value => [
@@ -53,17 +58,27 @@ return [
         ],
         UserNotificationType::CommentOnYourPost->value => [
             'title' => 'Новый комментарий',
-            'body' => ':author_name оставил(а) комментарий к публикации «:title».',
+            'body' => ':author_name оставил(а) комментарий:comment_excerpt_suffix к публикации «:title».',
             'action' => '/post/:post_id',
         ],
         UserNotificationType::ReportSubmitted->value => [
             'title' => 'Жалоба принята',
-            'body' => 'Ваша жалоба на комментарий к публикации «:title» принята и передана модератору.',
+            'body' => 'Ваша жалоба на комментарий:comment_excerpt_suffix к публикации «:title» принята и передана на рассмотрение администрации.',
             'action' => '/post/:post_id',
         ],
         UserNotificationType::ReportReviewed->value => [
             'title' => 'Жалоба рассмотрена',
-            'body' => ':review_outcome',
+            'body' => 'Жалоба на комментарий:comment_excerpt_suffix к публикации «:title». :review_outcome',
+            'action' => '/post/:post_id',
+        ],
+        UserNotificationType::PostReportSubmitted->value => [
+            'title' => 'Жалоба на публикацию принята',
+            'body' => 'Ваша жалоба на публикацию «:title» принята и будет рассмотрена администрацией.',
+            'action' => '/post/:post_id',
+        ],
+        UserNotificationType::PostReportReviewed->value => [
+            'title' => 'Жалоба на публикацию рассмотрена',
+            'body' => 'Жалоба на публикацию «:title». :review_outcome',
             'action' => '/post/:post_id',
         ],
         UserNotificationType::AccountBanned->value => [

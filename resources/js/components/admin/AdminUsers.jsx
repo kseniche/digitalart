@@ -513,6 +513,7 @@ function AdminUsers() {
                   mediaType={post?.media_type}
                   alt={post?.post_title}
                   className="admin-detail-media-el"
+                  enableLightbox={post?.media_type !== 'video'}
                 />
               </div>
 

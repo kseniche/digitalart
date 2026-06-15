@@ -9,6 +9,12 @@ import MediaPreview from '../common/MediaPreview';
 import AdminModerationStats from './AdminModerationStats';
 import FeedTagLink from '../common/FeedTagLink';
 import FeedCategoryLink from '../common/FeedCategoryLink';
+import AdminPostReports from './AdminPostReports';
+
+const SECTION_TABS = [
+  { id: 'moderation', label: 'Модерация публикаций' },
+  { id: 'reports', label: 'Жалобы на публикации' },
+];
 
 function AdminPosts() {
   const toast = useToast().toast;
@@ -33,6 +39,7 @@ function AdminPosts() {
   const [postDetailLoading, setPostDetailLoading] = useState(false);
   const [confirmDeleteComment, setConfirmDeleteComment] = useState({ open: false, commentId: null });
   const [stats, setStats] = useState(null);
+  const [sectionTab, setSectionTab] = useState('moderation');
 
   const formatDate = (dateString) => {
     if (!dateString) return '—';
@@ -435,6 +442,7 @@ function AdminPosts() {
                   mediaType={post?.media_type}
                   alt={post?.post_title}
                   className="admin-detail-media-el"
+                  enableLightbox={post?.media_type !== 'video'}
                 />
               </div>
               <div className="card-info admin-detail-content">
@@ -535,6 +543,23 @@ function AdminPosts() {
 
   return (
     <div className="admin-posts">
+      <div className="admin-tabs" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        {SECTION_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`admin-btn admin-btn-sm ${sectionTab === tab.id ? 'admin-btn-primary' : 'admin-btn-outline'}`}
+            onClick={() => setSectionTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {sectionTab === 'reports' ? (
+        <AdminPostReports onViewPost={fetchPostDetail} />
+      ) : (
+      <>
       <ConfirmModal
         open={confirmDelete.open}
         title="Удаление публикации за нарушение"
@@ -728,6 +753,8 @@ function AdminPosts() {
             </div>
           )}
         </>
+      )}
+    </>
       )}
     </div>
   );

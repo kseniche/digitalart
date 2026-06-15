@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import MediaLightbox from './MediaLightbox';
 
 const DESKTOP_HOVER_MQ = '(min-width: 770px)';
 
@@ -14,6 +15,8 @@ function MediaPreview({
   playsInline = true,
   onImageError,
   onMediaLoad,
+  /** Открыть изображение в полноэкранном lightbox по клику (только image) */
+  enableLightbox = false,
   /** 'card' — лента/профиль: без controls на desktop + hover autoplay; на mobile — native controls */
   interactionMode = 'default',
 }) {
@@ -24,6 +27,7 @@ function MediaPreview({
   const [hoverAutoplayEnabled, setHoverAutoplayEnabled] = useState(false);
 
   const isCardVideo = safeType === 'video' && interactionMode === 'card';
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
     setDisplaySrc(src || fallbackSrc);
@@ -86,6 +90,22 @@ function MediaPreview({
     }
   }, [isCardVideo, hoverAutoplayEnabled]);
 
+  const openLightbox = useCallback(() => {
+    if (enableLightbox && safeType === 'image') {
+      setLightboxOpen(true);
+    }
+  }, [enableLightbox, safeType]);
+
+  const handleImageKeyDown = useCallback(
+    (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openLightbox();
+      }
+    },
+    [openLightbox]
+  );
+
   if (safeType === 'video') {
     const showControls = isCardVideo ? !hoverAutoplayEnabled : controls;
     const videoClassName = [
@@ -116,16 +136,35 @@ function MediaPreview({
     );
   }
 
+  const imageClassName = [className, enableLightbox ? 'media-preview--lightbox-trigger' : '']
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <img
-      src={displaySrc}
-      alt={alt}
-      className={className}
-      style={style}
-      loading="lazy"
-      onLoad={notifyLayout}
-      onError={applyFallback}
-    />
+    <>
+      <img
+        src={displaySrc}
+        alt={alt}
+        className={imageClassName}
+        style={style}
+        loading="lazy"
+        onLoad={notifyLayout}
+        onError={applyFallback}
+        onClick={enableLightbox ? openLightbox : undefined}
+        onKeyDown={enableLightbox ? handleImageKeyDown : undefined}
+        role={enableLightbox ? 'button' : undefined}
+        tabIndex={enableLightbox ? 0 : undefined}
+      />
+      {enableLightbox && (
+        <MediaLightbox
+          open={lightboxOpen}
+          src={displaySrc}
+          mediaType="image"
+          alt={alt}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
+    </>
   );
 }
 

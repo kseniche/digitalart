@@ -86,6 +86,18 @@ class Post extends Model
         return $this->belongsToMany(User::class, 'favorites')->withTimestamps();
     }
 
+    public function reports(): HasMany
+    {
+        return $this->hasMany(PostReport::class, 'post_id', 'id');
+    }
+
+    public function hasConfirmedReport(): bool
+    {
+        return $this->reports()
+            ->where('status', \App\Enums\PostReportStatus::Confirmed)
+            ->exists();
+    }
+
     /**
      * Accessor для image_url (оригинальное изображение)
      * С кэшированием на 1 час для производительности

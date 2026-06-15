@@ -272,6 +272,7 @@ function UserDetail({ user, onBack, onUserAction, onShowUserPosts }) {
                         mediaType={post.media_type}
                         alt={post.post_title}
                         className="post-thumbnail"
+                        enableLightbox={post.media_type !== 'video'}
                       />
                     )}
                   </div>

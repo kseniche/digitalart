@@ -4011,6 +4011,10 @@ button.feed-nav-chip.post-detail-category {
   border-radius: 8px;
 }
 
+.media-preview--lightbox-trigger {
+  cursor: zoom-in;
+}
+
 @keyframes media-lightbox-in {
   from {
     opacity: 0;

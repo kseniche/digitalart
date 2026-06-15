@@ -18,6 +18,7 @@ import { IconHeart, IconBookmark, IconComment, IconEdit, IconTrash, IconPublish 
 import MasonryGrid from './common/MasonryGrid';
 import MasonryRecommendationCard from './MasonryRecommendationCard';
 import CommentActionsMenu from './common/CommentActionsMenu';
+import PostActionsMenu from './common/PostActionsMenu';
 import FeedTagLink from './common/FeedTagLink';
 import FeedCategoryLink from './common/FeedCategoryLink';
 import { normalizeTagsList } from '../utils/feedUrl';
@@ -69,6 +70,7 @@ function PostDetail() {
   const isOwnPost = post && user && post.author?.id === user.id;
   /** Отклонённая модерацией публикация: без ленты соц.действий, комментариев и рекомендаций */
   const isRejectedUnpublished = post?.moderation_status === 'rejected';
+  const isLockedByReport = !!post?.hidden_by_report && isRejectedUnpublished;
   const isApprovedPublished = !!post
     && !post.is_draft
     && post.moderation_status === 'approved'
@@ -537,11 +539,20 @@ method: 'PUT',
           )}
           {post.moderation_status === 'rejected' && (
             <div className="post-rejected-box">
-              <div className="post-rejected-title">Публикация отклонена модерацией</div>
+              <div className="post-rejected-title">
+                {isLockedByReport
+                  ? 'Публикация скрыта по результатам рассмотрения жалобы'
+                  : 'Публикация отклонена модерацией'}
+              </div>
               <div className="post-rejected-label">Причина:</div>
               <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {(post.moderation_rejection_reason && String(post.moderation_rejection_reason).trim()) || 'Нарушает правила сообщества.'}
               </div>
+              {isLockedByReport && (
+                <p className="post-rejected-note" style={{ marginTop: '0.75rem' }}>
+                  Публикация не может быть изменена или отправлена повторно на модерацию.
+                </p>
+              )}
             </div>
           )}
           <div className="post-author-block">
@@ -602,6 +613,14 @@ method: 'PUT',
             <h2 className="post-detail-title">
               {post.post_title}
             </h2>
+            {isApprovedPublished && !isRejectedUnpublished && !isOwnPost && (
+              <PostActionsMenu
+                postId={post.id}
+                authorUserId={post.author?.id}
+                onReported={(msg) => toast.success(msg || 'Жалоба принята')}
+                onLoginRequired={() => setShowLoginModal(true)}
+              />
+            )}
             {isOwnPost && (
               <div className="post-detail-actions">
                 {post.is_draft ? (
@@ -639,15 +658,17 @@ method: 'PUT',
                   </>
                 ) : (
                   <>
-                    <button
-                      type="button"
-                      className="post-social-action"
-                      onClick={() => setShowEditModal(true)}
-                      aria-label="Редактировать"
-                    >
-                      <IconEdit />
-                      <span className="post-social-action__label">Редактировать</span>
-                    </button>
+                    {!isLockedByReport && (
+                      <button
+                        type="button"
+                        className="post-social-action"
+                        onClick={() => setShowEditModal(true)}
+                        aria-label="Редактировать"
+                      >
+                        <IconEdit />
+                        <span className="post-social-action__label">Редактировать</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="post-social-action post-social-action--danger"

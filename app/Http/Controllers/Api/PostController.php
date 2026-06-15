@@ -395,6 +395,7 @@ public function show($id, Request $request)
         }
         $post->setAttribute('category', $post->category?->name);
         $post->setAttribute('post_content_html', \App\Helpers\MarkdownHelper::toSafeHtml($post->post_content));
+        $post->setAttribute('hidden_by_report', $post->hasConfirmedReport());
         if (! $isRejectedAuthorView) {
             $post->increment('view_count');
         }
@@ -422,6 +423,12 @@ public function update(Request $request, Post $post)
     // Проверка прав - только владелец поста может редактировать (админ не может редактировать чужие посты)
     if (!$isOwner) {
         return response()->json(['message' => 'Недостаточно прав. Вы можете редактировать только свои публикации.'], 403);
+    }
+
+    if (($post->moderation_status ?? '') === 'rejected' && $post->hasConfirmedReport()) {
+        return response()->json([
+            'message' => 'Публикация скрыта по результатам рассмотрения жалобы и не может быть изменена или отправлена повторно.',
+        ], 403);
     }
 
     $data = $request->validate([

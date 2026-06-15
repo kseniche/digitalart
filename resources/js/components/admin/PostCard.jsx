@@ -116,6 +116,7 @@ function PostCard({ post, onAction, showView = true }) {
             mediaType={post.media_type}
             alt={post.post_title}
             className="admin-post-thumbnail"
+            enableLightbox={post.media_type !== 'video'}
           />
         </div>
       )}

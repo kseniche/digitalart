@@ -181,6 +181,8 @@
   flex: 1;
   padding: 2rem;
   overflow-y: auto;
+  min-width: 0;
+  overflow-x: clip;
 }
 
 .admin-dashboard {
@@ -588,9 +590,32 @@
 
 .users-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
   gap: 1.5rem;
   margin-bottom: 2rem;
+}
+
+.admin-users {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.admin-users .admin-section-header {
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+}
+
+.admin-users .admin-filters {
+  width: 100%;
+}
+
+.admin-users .admin-filters .admin-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .user-card {
@@ -599,6 +624,9 @@
   padding: 1.5rem;
   border: 1px solid #D4D1CC;
   transition: transform 0.2s ease;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .user-card:hover {
@@ -650,6 +678,7 @@
 
 .user-card__info {
   flex: 1;
+  min-width: 0;
 }
 
 .user-card__name {
@@ -658,6 +687,8 @@
   font-weight: 600;
   color: #111827;
   font-family: 'JetBrains Mono', monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .user-card__email {
@@ -665,6 +696,8 @@
   color: #6c757d;
   font-size: 0.9rem;
   font-family: 'JetBrains Mono', monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .user-card__username {
@@ -698,6 +731,10 @@
 .meta-value {
   color: #111827;
   font-weight: 600;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: right;
+  max-width: 60%;
 }
 
 .admin-status-row {
@@ -720,6 +757,8 @@
   font-style: italic;
   font-size: 0.9rem;
   font-family: 'JetBrains Mono', monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .profile-stats {
@@ -728,6 +767,9 @@
   font-size: 0.85rem;
   color: #6c757d;
   font-family: 'JetBrains Mono', monospace;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .user-card__stats {
@@ -1978,4 +2020,76 @@
 .admin-categories .admin-categories-empty {
   color: #6c757d;
   font-family: 'JetBrains Mono', monospace;
+}
+
+.admin-post-reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.admin-post-report-card {
+  background: #DEDDD8;
+  border: 1px solid #D4D1CC;
+  border-radius: 12px;
+  padding: 1.25rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.admin-post-report-card__date {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
+.admin-post-report-card__section {
+  margin-bottom: 0.75rem;
+}
+
+.admin-post-report-card__section p {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.admin-post-report-card__muted {
+  color: #6c757d;
+  font-size: 0.9rem;
+}
+
+.admin-post-report-card__post-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.admin-post-report-thumbnail {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.admin-post-report-card__post-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.admin-post-report-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.admin-post-reports,
+.admin-post-reports .admin-section-header {
+  width: 100%;
+  min-width: 0;
 }

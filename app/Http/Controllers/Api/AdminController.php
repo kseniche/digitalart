@@ -20,6 +20,7 @@ use App\Notifications\PostRestoredNotification;
 use App\Notifications\UserBannedNotification;
 use App\Notifications\UserRoleChangedNotification;
 use App\Notifications\UserUnbannedNotification;
+use App\Services\PostReportService;
 use App\Services\UserNotificationService;
 use Spatie\Permission\Models\Role;
 use Carbon\Carbon;
@@ -32,6 +33,7 @@ class AdminController extends Controller
 {
     public function __construct(
         private readonly UserNotificationService $userNotifications,
+        private readonly PostReportService $postReports,
     ) {}
 
     /**
@@ -750,6 +752,11 @@ class AdminController extends Controller
                     ['post_id' => $post->id]
                 );
             }
+            $this->postReports->notifyReportersOnPostMeasures(
+                $post,
+                $request->user(),
+                'публикация отклонена модератором'
+            );
             Log::info('Post rejected by admin', ['post_id' => $post->id, 'reason' => $reason]);
 
             return response()->json([
@@ -798,6 +805,11 @@ class AdminController extends Controller
                     ['post_id' => $post->id]
                 );
             }
+            $this->postReports->notifyReportersOnPostMeasures(
+                $post,
+                $request->user(),
+                'публикация удалена за нарушение правил'
+            );
             Log::info('Post deleted by admin for violation', ['post_id' => $post->id, 'reason' => $reason]);
 
             $days = \App\Support\ContentRetention::graceDays();
@@ -971,9 +983,9 @@ class AdminController extends Controller
                     new CommentRemovedByAdminNotification($comment),
                     ['comment_id' => $comment->id, 'post_id' => $comment->post_id]
                 );
-                $this->userNotifications->notifyCommentReporters(
+                $this->userNotifications->notifyReportersJustified(
                     $comment,
-                    'По результатам проверки комментарий удалён модератором.'
+                    \App\Support\CommentReportOutcomeText::MEASURE_COMMENT_DELETED
                 );
             }
             

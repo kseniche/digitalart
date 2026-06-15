@@ -12,6 +12,9 @@ export const FIELD_LIMITS = {
   commentReport: {
     otherText: { min: 0, max: 1000 },
   },
+  postReport: {
+    otherText: { min: 0, max: 1000 },
+  },
   profile: {
     name: { min: 1, max: 255 },
     userSurname: { min: 0, max: 255 },

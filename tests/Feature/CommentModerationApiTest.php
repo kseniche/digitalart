@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\UserNotificationType;
 use App\Models\Comment;
 use App\Models\CommentReport;
 use App\Models\Post;
@@ -64,6 +65,115 @@ class CommentModerationApiTest extends TestCase
             ]);
 
         $duplicate->assertStatus(422);
+    }
+
+    public function test_report_submission_creates_internal_notification(): void
+    {
+        $author = User::factory()->create();
+        $reporter = User::factory()->create();
+        $post = Post::factory()->create([
+            'user_id' => $author->id,
+            'moderation_status' => 'approved',
+            'is_draft' => false,
+            'published_at' => now()->subMinute(),
+        ]);
+        $comment = $this->approvedComment($post, $author);
+        $token = $reporter->createToken('test')->plainTextToken;
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson("/api/comments/{$comment->id}/report", ['reason' => 'spam'])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('user_notifications', [
+            'user_id' => $reporter->id,
+            'type' => UserNotificationType::ReportSubmitted->value,
+            'email_sent' => false,
+        ]);
+
+        $notification = \App\Models\UserNotification::query()
+            ->where('user_id', $reporter->id)
+            ->where('type', UserNotificationType::ReportSubmitted->value)
+            ->first();
+
+        $this->assertNotNull($notification);
+        $this->assertStringContainsString('передана на рассмотрение администрации', $notification->body);
+        $this->assertStringContainsString($post->post_title, $notification->body);
+    }
+
+    public function test_dismiss_reports_notifies_reporter_without_duplicate_email_hint_flag_when_mail_disabled(): void
+    {
+        $admin = User::factory()->create();
+        $admin->assignRole('admin');
+        $token = $admin->createToken('test')->plainTextToken;
+
+        $author = User::factory()->create();
+        $reporter = User::factory()->create(['email_notifications_enabled' => false]);
+        $post = Post::factory()->create(['user_id' => $author->id]);
+        $comment = $this->approvedComment($post, $author);
+        $comment->update(['is_hidden' => true, 'hidden_at' => now()]);
+
+        CommentReport::create([
+            'comment_id' => $comment->id,
+            'user_id' => $reporter->id,
+            'reason' => 'spam',
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson("/api/admin/comments/{$comment->id}/dismiss-reports")
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('user_notifications', [
+            'user_id' => $reporter->id,
+            'type' => UserNotificationType::ReportReviewed->value,
+            'email_sent' => false,
+        ]);
+
+        $notification = \App\Models\UserNotification::query()
+            ->where('user_id', $reporter->id)
+            ->where('type', UserNotificationType::ReportReviewed->value)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($notification);
+        $this->assertStringContainsString('Нарушение не было подтверждено', $notification->body);
+    }
+
+    public function test_delete_comment_notifies_reporter_with_justified_outcome(): void
+    {
+        $admin = User::factory()->create();
+        $admin->assignRole('admin');
+        $token = $admin->createToken('test')->plainTextToken;
+
+        $author = User::factory()->create();
+        $reporter = User::factory()->create();
+        $post = Post::factory()->create([
+            'user_id' => $author->id,
+            'moderation_status' => 'approved',
+            'is_draft' => false,
+            'published_at' => now()->subMinute(),
+            'comment_count' => 1,
+        ]);
+        $comment = $this->approvedComment($post, $author);
+
+        CommentReport::create([
+            'comment_id' => $comment->id,
+            'user_id' => $reporter->id,
+            'reason' => 'insult',
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->deleteJson("/api/admin/comments/{$comment->id}")
+            ->assertStatus(200);
+
+        $notification = \App\Models\UserNotification::query()
+            ->where('user_id', $reporter->id)
+            ->where('type', UserNotificationType::ReportReviewed->value)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($notification);
+        $this->assertStringContainsString('приняты меры', $notification->body);
+        $this->assertStringContainsString('Комментарий удалён', $notification->body);
     }
 
     public function test_user_cannot_report_own_comment(): void

@@ -11,6 +11,7 @@ use App\Notifications\CommentRestoredNotification;
 use App\Services\CommentModerationService;
 use App\Services\UserNotificationService;
 use App\Support\ContentRetention;
+use App\Support\CommentReportOutcomeText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -205,12 +206,8 @@ class AdminCommentController extends Controller
                 return response()->json(['message' => 'Жалоб на этот комментарий нет'], 422);
             }
 
+            $this->userNotifications->notifyReportersUnjustified($comment);
             $this->moderation->dismissAllReports($comment);
-
-            $this->userNotifications->notifyCommentReporters(
-                $comment,
-                'Модератор рассмотрел жалобу. Комментарий остаётся на сайте.'
-            );
 
             return response()->json(['message' => 'Жалобы сняты, комментарий остаётся на сайте']);
         } catch (\Throwable $e) {
@@ -255,9 +252,9 @@ class AdminCommentController extends Controller
                     ),
                     ['comment_id' => $fresh->id, 'post_id' => $fresh->post_id]
                 );
-                $this->userNotifications->notifyCommentReporters(
+                $this->userNotifications->notifyReportersJustified(
                     $fresh,
-                    'По результатам проверки комментарий удалён модератором.'
+                    CommentReportOutcomeText::MEASURE_COMMENT_DELETED
                 );
             }
 
@@ -319,9 +316,9 @@ class AdminCommentController extends Controller
                     ),
                     ['comment_id' => $fresh->id, 'post_id' => $fresh->post_id]
                 );
-                $this->userNotifications->notifyCommentReporters(
+                $this->userNotifications->notifyReportersJustified(
                     $fresh,
-                    'По результатам проверки комментарий удалён модератором.'
+                    CommentReportOutcomeText::MEASURE_COMMENT_DELETED
                 );
             }
 

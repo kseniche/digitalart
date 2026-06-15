@@ -319,6 +319,7 @@ function AdminComments() {
                   mediaType={post?.media_type}
                   alt={post?.post_title}
                   className="admin-detail-media-el"
+                  enableLightbox={post?.media_type !== 'video'}
                 />
               </div>
               <div className="card-info admin-detail-content">
